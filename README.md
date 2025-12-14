@@ -13,7 +13,7 @@ PicoVerse is a community-driven effort to build versatile MSX cartridges powered
 
 ### PicoVerse 2040 Cartridge
 
-![alt text](../images/2025-12-02_20-05.png)
+![alt text](images/2025-12-02_20-05.png)
 
 - Based on RP2040 boards exposing 30 GPIO pins (not compatible with stock Raspberry Pi Pico pinout).
 - Up to 16 MB of flash for MSX ROMs with support for Plain16/32, Linear0, Konami SCC, Konami, ASCII8/16, NEO-8, and NEO-16 mappers.
