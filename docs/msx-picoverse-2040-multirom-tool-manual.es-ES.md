@@ -177,6 +177,7 @@ El cartucho PicoVerse 2040 con firmware MultiROM se ha probado en los siguientes
 | MSX Book | MSX2+ (clon FPGA) | OK | Operación verificada |
 | MSX One | MSX1 | No OK | Cartucho no reconocido |
 | National FS-4500 | MSX1 | OK | Operación verificada |
+| Omega MSX | MSX2+ | OK | Operación verificada |
 | Panasonic FS-A1GT | TurboR | OK | Operación verificada |
 | Panasonic FS-A1ST | TurboR | OK | Operación verificada |
 | Panasonic FS-A1WX | MSX2+ | OK | Operación verificada |
@@ -190,13 +191,24 @@ El cartucho PicoVerse 2040 con firmware MultiROM se ha probado en los siguientes
 | uMSX | MSX2+ (clon FPGA) | OK | Operación verificada |
 | Yamaha YIS604 | MSX1 | OK | Operación verificada |
 
-El cartucho PicoVerse 2040 con firmware Sunrise Nextor +240K se ha probado en los siguientes modelos MSX:
+El cartucho PicoVerse 2040 con firmware Sunrise Nextor +240K (opción `-s2`) se ha probado en los siguientes modelos MSX:
 
 | Modelo | Tipo | Estado | Comentarios |
 | --- | --- | --- | --- |
+| Gradiente Expert | MSX1 | Not OK | Mapeador de memoria no funciona, por tanto Nextor no funcional |
 | Sharp HotBit HB8000 (MSX1) | MSX1| No OK | Mapeador de memoria no funciona, por tanto Nextor no funcional |
+| Sony HB-F1XD | MSX2 | OK | Operación verificada |
 | TRHMSX (MSX2+, clon FPGA) | MSX2+ | OK | Operación verificada |
 | uMSX (MSX2+, clon FPGA) | MSX2+ | OK | Operación verificada |
 
+La ROM Nextor embebida experimental (opción `-n`) ha sido probada en los siguientes modelos MSX:
+
+| Modelo | Tipo | Estado | Comentarios |
+| --- | --- | --- | --- |
+| Omega MSX | MSX2+ | No OK | USB no detectado |
+| Sony HB-F1XD | MSX2 | No OK | Error al leer un sector del disco |
+| TRHMSX | MSX2+ (clon FPGA) | OK | Operación verificada |
+| uMSX | MSX2+ (clon FPGA) | OK | Operación verificada |
+
 Autor: Cristiano Almeida Goncalves
-Última actualización: 21/12/2025
+Última actualización: 25/12/2025

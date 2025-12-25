@@ -177,6 +177,7 @@ MultiROM ファームウェアを搭載した PicoVerse 2040 カートリッジ�
 | MSX Book | MSX2+ (FPGA clone) | OK | 動作確認済み |
 | MSX One | MSX1 | Not OK | カートリッジが認識されない |
 | National FS-4500 | MSX1 | OK | 動作確認済み |
+| Omega MSX | MSX2+ | OK | 動作確認済み |
 | Panasonic FS-A1GT | TurboR | OK | 動作確認済み |
 | Panasonic FS-A1ST | TurboR | OK | 動作確認済み |
 | Panasonic FS-A1WX | MSX2+ | OK | 動作確認済み |
@@ -194,9 +195,19 @@ Sunrise Nextor +240K ファームウェアを搭載した PicoVerse 2040 カー�
 
 | Model | Type | Status | Comments |
 | --- | --- | --- | --- |
+| Gradiente Expert | MSX1 | Not OK | メモリマッパーが動作せず Nextor が機能しない |
 | Sharp HotBit HB8000 (MSX1) | MSX1| Not OK | メモリマッパーが動作せず Nextor が機能しない |
 | TRHMSX (MSX2+, FPGA clone) | MSX2+ |  OK | 動作確認済み |
 | uMSX (MSX2+, FPGA clone) | MSX2+ | OK | 動作確認済み
 
+実験的な埋め込み Nextor ROM は、次の MSX 機種でテストされています:
+
+| 機種 | タイプ | 状態 | 備考 |
+| --- | --- | --- | --- |
+| Omega MSX | MSX2+ | Not OK | USB が検出されない |
+| Sony HB-F1XD | MSX2 | Not OK | ディスクセクタの読み取りエラー |
+| TRHMSX | MSX2+ (FPGA クローン) | OK | 動作確認済み |
+| uMSX | MSX2+ (FPGA クローン) | OK | 動作確認済み |
+
 作成者: Cristiano Almeida Goncalves
-最終更新: 12/21/2025
+最終更新: 12/25/2025
