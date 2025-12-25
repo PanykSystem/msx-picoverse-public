@@ -1,4 +1,3 @@
-```markdown
 # Proyecto MSX PicoVerse 2040
 
 |PicoVerse Frontal|PicoVerse Trasera|
@@ -183,4 +182,4 @@ La ROM Nextor incrustada experimental (opción `-n`) ha sido probada en los sigu
 
 Autor: Cristiano Almeida Goncalves
 Última actualización: 12/25/2025
-```
+

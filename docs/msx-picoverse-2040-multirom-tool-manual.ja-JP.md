@@ -1,4 +1,3 @@
-```markdown
 # MSX PicoVerse 2040 プロジェクト
 
 |PicoVerse 前面|PicoVerse 背面|
@@ -183,4 +182,3 @@ MultiROM ファームウェアを搭載した PicoVerse 2040 カートリッジ�
 
 作者: Cristiano Almeida Goncalves
 最終更新: 12/25/2025
-```

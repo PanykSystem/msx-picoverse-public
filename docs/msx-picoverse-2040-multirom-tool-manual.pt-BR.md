@@ -1,4 +1,3 @@
-```markdown
 # Projeto MSX PicoVerse 2040
 
 |PicoVerse Frente|PicoVerse Verso|
@@ -183,4 +182,3 @@ A ROM Nextor incorporada experimental (opção `-n`) foi testada nos seguintes m
 
 Autor: Cristiano Almeida Goncalves
 Última atualização: 12/25/2025
-```
