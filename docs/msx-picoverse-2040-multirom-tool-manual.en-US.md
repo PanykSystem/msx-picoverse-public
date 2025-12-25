@@ -60,9 +60,6 @@ multirom.exe [options]
 - `-n`, `--nextor` : Includes the beta embedded NEXTOR ROM from the configuration and outputs. This option is still experimental and at this moment only works on specific MSX2 models.
 - `-h`, `--help`   : Show usage help and exit.
 - `-o <filename>`, `--output <filename>` : Set UF2 output filename (default is `multirom.uf2`).
-- `-s1`            : Cartridge boots with Sunrise IDE Nextor (no memory mapper).
-- `-s2`            : Cartridge boots with Sunrise IDE Nextor (+240 KB memory mapper).
-- If neither `-s1` nor `-s2` is specified, the tool produces a MultiROM image with the menu.
 - If you need to force a specific mapper type for a ROM file, you can append a mapper tag before the `.ROM` extension in the filename. The tag is case-insensitive. For example, naming a file `Knight Mare.PL-32.ROM` forces the use of the PL-32 mapper for that ROM. Tags like `SYSTEM` are ignored. The list of possible tags that can be used is: `PL-16,  PL-32,  KonSCC,  Linear,  ASC-08,  ASC-16,  Konami,  NEO-8,  NEO-16`
 
 ### Examples
@@ -70,16 +67,7 @@ multirom.exe [options]
   ```
   multirom.exe
   ```
-
-- Produces the multirom.uf2 file with the Sunrise IDE Nextor ROM (no memory mapper):
-  ```
-  multirom.exe -s1
-  ```
-- Produces the multirom.uf2 file with the Sunrise IDE Nextor ROM (+240 KB memory mapper):
-  ```
-  multirom.exe -s2
-  ```
-
+  
 ## How it works (high level)
 
 1. The tool scans the current working directory for files ending with `.ROM` or `.rom`. For each file:
@@ -190,17 +178,6 @@ The PicoVerse 2040 cartridge with MultiROM firmware has been tested on the follo
 | TRHMSX | MSX2+ (FPGA clone) | OK | Verified operation |
 | uMSX | MSX2+ (FPGA clone) | OK | Verified operation |
 | Yamaha YIS604 | MSX1 | OK | Verified operation |
-
-The PicoVerse 2040 cartridge with Sunrise Nextor +240K firmware (option `-s2`) has been tested on the following MSX models:
-
-| Model | Type | Status | Comments |
-| --- | --- | --- | --- |
-| Gradiente Expert | MSX1 | Not OK | Memory mapper not working then Nextor not functional |
-| Omega MSX | MSX2+ | OK | Verified operation |
-| Sharp HotBit HB8000 (MSX1) | MSX1| Not OK | Memory mapper not working then Nextor not functional |
-| Sony HB-F1XD | MSX2 | OK | Verified operation |
-| TRHMSX (MSX2+, FPGA clone) | MSX2+ |  OK | Verified operation |
-| uMSX (MSX2+, FPGA clone) | MSX2+ | OK | Verified operation
 
 Experimental embedded Nextor ROM (option `-n`) has been tested on the following MSX models:
 
