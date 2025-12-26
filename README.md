@@ -105,7 +105,7 @@ For design source files, firmware code, and ongoing development discussions, see
 |---------|---------|
 |![alt text](/images/multirom_2040_menu.png)|![alt text](/images/multirom_2350_menu.png)|
 
-To use the MultiROM menu, insert the PicoVerse 2040 cartridge into your MSX and power it on. The system will boot directly into the MultiROM menu, which displays a list of all ROMs embedded in the cartridge. Each entry is named after the ROM filename (up to 50 characters), and longer names are shown using a scrolling effect.
+To use the MultiROM menu, insert the PicoVerse cartridge into your MSX and power it on. The system will boot directly into the MultiROM menu, which displays a list of all ROMs embedded in the cartridge. Each entry is named after the ROM filename (up to 50 characters), and longer names are shown using a scrolling effect.
 
 Navigate the menu using the keyboard arrow keys. Use the Up and Down keys to move through the list of ROMs, and if more than 19 ROMs are present, use the Left and Right keys to switch between pages. To start a game or application, select it and press Enter or Space; the MSX will boot the ROM using the appropriate mapper configuration automatically.
 
