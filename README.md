@@ -83,6 +83,7 @@ Interactive BOM available at [PicoVerse 2040 BOM](https://htmlpreview.github.io/
 - `software/` – MultiROM PC utilities (`multirom.exe`) and menu ROM assets for both cartridge families.
 - `docs/` – Feature lists, usage walkthroughs, and revision history for each cartridge family.
 - `images/` – Board renders and build photos for quick identification.
+- `labels/` – Printable Patola style cartridge label designs for both hardware variants.
 
 For design source files, firmware code, and ongoing development discussions, see the private engineering repository.
 
@@ -113,7 +114,7 @@ While in the menu, pressing the H key opens a help screen with basic instruction
 Check the detailed MultiROM guide in the documentation folder for advanced features, troubleshooting tips, and mapper support details.
 
 ## Compatibility & Requirements
-- Works with MSX, MSX2, and MSX2+ systems. Mapper support covers the most common game and utility formats.
+- Works with MSX, MSX2, MSX2+, and MSX TurboR systems. Mapper support covers the most common game and utility formats.
 - Requires Windows or Linux to run the PC-side UF2 builder utilities.
 - Ensure your development board matches the pinout documented for each hardware revision before soldering.
 
