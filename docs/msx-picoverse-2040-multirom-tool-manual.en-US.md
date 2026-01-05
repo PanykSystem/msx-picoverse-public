@@ -161,11 +161,13 @@ The PicoVerse 2040 cartridge with MultiROM firmware has been tested on the follo
 | Panasonic FS-A1ST | TurboR | OK | Verified operation |
 | Panasonic FS-A1WX | MSX2+ | OK | Verified operation |
 | Panasonic FS-A1WSX | MSX2+ | OK | Verified operation |
+| Sanyo Wavy 70FD | MSX2+ | OK | Verified operation |
 | Sharp HotBit HB8000 | MSX1 | OK | Verified operation |
 | SMX-HB | MSX2+ (FPGA clone) | OK | Verified operation |
 | Sony HB-F1XD | MSX2 | OK | Verified operation |
 | Sony HB-F1XDJ | MSX2 | OK | Verified operation |
 | Sony HB-F1XV | MSX2+ | OK | Verified operation |
+| Sony Hit-Bit 20HB | MSX1 | OK | Verified operation |
 | TRHMSX | MSX2+ (FPGA clone) | OK | Verified operation |
 | uMSX | MSX2+ (FPGA clone) | OK | Verified operation |
 | Yamaha YIS604 | MSX1 | OK | Verified operation |

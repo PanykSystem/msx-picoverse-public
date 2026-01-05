@@ -123,13 +123,5 @@ Check the detailed MultiROM guide in the documentation folder for advanced featu
 
 All hardware and firmware binaries in this repository are released under the Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International license. Personal builds and community tinkering are encouraged, but commercial use or resale requires explicit authorization from the author.
 
-tusb_config.h is based on code from the TinyUSB project, which is Copyright (c) 2019, 2021 Ha Thach (tinyusb.org) and released under the MIT licence. hw_config.c is based on code from the no-OS-FatFS-SD-SPI-RPi-Pico project, which is Copyright (c) 2021 Carl John Kugler III.
-
-msxbios.h is Copyright (c) 2020 by Danilo Angelo and was adapted from http://www.konamiman.com/msx/msx2th/th-ap.txt
-
-msxromcrt0.s is Copyright (c) 2022 by S0urceror.
-
-uf2format.h is Copyright (c) 2020 by Microsoft Corporation and released under the MIT licence. The file is part of the UF2 file format specification, which is used for flashing microcontrollers over removable flash drives. 
-
 ## Feedback & Community
 Questions, test reports, and build photos are welcome. Open an issue on the public repository or reach out through the MSX retro hardware forums where PicoVerse updates are posted.

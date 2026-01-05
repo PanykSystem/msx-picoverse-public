@@ -160,11 +160,13 @@ El cartucho PicoVerse 2040 con firmware MultiROM ha sido probado en los siguient
 | Panasonic FS-A1ST | TurboR | OK | Funcionamiento verificado |
 | Panasonic FS-A1WX | MSX2+ | OK | Funcionamiento verificado |
 | Panasonic FS-A1WSX | MSX2+ | OK | Funcionamiento verificado |
+| Sanyo Wavy 70FD | MSX2+ | OK | Funcionamiento verificado |
 | Sharp HotBit HB8000 | MSX1 | OK | Funcionamiento verificado |
 | SMX-HB | MSX2+ (clon FPGA) | OK | Funcionamiento verificado |
 | Sony HB-F1XD | MSX2 | OK | Funcionamiento verificado |
 | Sony HB-F1XDJ | MSX2 | OK | Funcionamiento verificado |
 | Sony HB-F1XV | MSX2+ | OK | Funcionamiento verificado |
+| Sony Hit-Bit 20HB | MSX1 | OK | Funcionamiento verificado |
 | TRHMSX | MSX2+ (clon FPGA) | OK | Funcionamiento verificado |
 | uMSX | MSX2+ (clon FPGA) | OK | Funcionamiento verificado |
 | Yamaha YIS604 | MSX1 | OK | Funcionamiento verificado |

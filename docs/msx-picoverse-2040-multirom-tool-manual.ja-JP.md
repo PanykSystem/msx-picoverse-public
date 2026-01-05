@@ -160,11 +160,13 @@ MultiROM ファームウェアを搭載した PicoVerse 2040 カートリッジ�
 | Panasonic FS-A1ST | TurboR | OK | 動作確認済み |
 | Panasonic FS-A1WX | MSX2+ | OK | 動作確認済み |
 | Panasonic FS-A1WSX | MSX2+ | OK | 動作確認済み |
+| Sanyo Wavy 70FD | MSX2+ | OK | 動作確認済み |
 | Sharp HotBit HB8000 | MSX1 | OK | 動作確認済み |
 | SMX-HB | MSX2+ (FPGA クローン) | OK | 動作確認済み |
 | Sony HB-F1XD | MSX2 | OK | 動作確認済み |
 | Sony HB-F1XDJ | MSX2 | OK | 動作確認済み |
 | Sony HB-F1XV | MSX2+ | OK | 動作確認済み |
+| Sony Hit-Bit 20HB | MSX1 | OK | 動作確認済み |
 | TRHMSX | MSX2+ (FPGA クローン) | OK | 動作確認済み |
 | uMSX | MSX2+ (FPGA クローン) | OK | 動作確認済み |
 | Yamaha YIS604 | MSX1 | OK | 動作確認済み |
