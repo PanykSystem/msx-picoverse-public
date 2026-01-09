@@ -14,9 +14,9 @@
 #ifndef LOADROM_H
 #define LOADROM_H
 
-#define MAX_MEM_SIZE        (131072+29)    // Maximum memory size
-#define ROM_NAME_MAX        20          // Maximum ROM name length
-#define SIZE_CONFIG_RECORD  29          // Size of the configuration record in the ROM
+#define ROM_NAME_MAX    50   // Maximum size of the ROM name
+#define ROM_RECORD_SIZE (ROM_NAME_MAX + 1 + (sizeof(uint32_t) * 2)) // Name + mapper + size + offset
+#define CACHE_SIZE      196608     // 192KB cache size for ROM data
 #define PICO_FLASH_SPI_CLKDIV 2
 
 // -----------------------
@@ -63,7 +63,8 @@
 extern unsigned char __flash_binary_end;
 
 // Optionally copy the ROM into this SRAM buffer for faster access
-static uint8_t rom_sram[MAX_MEM_SIZE];
+static uint8_t rom_sram[CACHE_SIZE];
+static uint32_t active_rom_size = 0;
 
 // The ROM is concatenated right after the main program binary.
 // __flash_binary_end points to the end of the program in flash memory.

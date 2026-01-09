@@ -177,75 +177,37 @@ void dump_rom(uint32_t size)
 // AB is on 0x0000, 0x0001
 // 16KB ROMS have only one page in the 0x4000-0x7FFF area
 // AB is on 0x0000, 0x0001
-void __no_inline_not_in_flash_func(loadrom_plain32)(uint32_t offset)
+void __no_inline_not_in_flash_func(loadrom_plain32)(uint32_t offset, bool cache_enable)
 {
-    gpio_set_dir_in_masked(0xFF << 16); // Set data bus to input mode
-    while (true) 
-    {
-        bool sltsl = !(gpio_get(PIN_SLTSL)); // Slot selected (active low)
-        bool rd = !(gpio_get(PIN_RD));       // Read cycle (active low)
+    const uint8_t *rom_base = rom + offset;
 
-        if (sltsl) 
-        {
-            uint16_t addr = gpio_get_all() & 0x00FFFF; // Read the address bus
-            if (addr >= 0x4000 && addr <= 0xBFFF) // Check if the address is within the ROM range
-            {
-                if (rd) // Handle read requests within the ROM address range
-                {
-                    uint32_t rom_addr = offset + (addr - 0x4000); // Calculate flash address
-                    gpio_set_dir_out_masked(0xFF << 16); // Set data bus to output mode
-                    gpio_put_masked(0xFF0000, rom[rom_addr] << 16); // Write the data to the data bus
-                    while (!(gpio_get(PIN_RD)))  // Wait until the read cycle completes (RD goes high)
-                    {
-                        tight_loop_contents();
-                    }
-                    gpio_set_dir_in_masked(0xFF << 16); // Return data bus to input mode after cycle completes
-                }
-            } 
-        } 
+    if (cache_enable)
+    {
+        gpio_init(PIN_WAIT);
+        gpio_set_dir(PIN_WAIT, GPIO_OUT);
+        gpio_put(PIN_WAIT, 0);
+        memset(rom_sram, 0, 32768);
+        memcpy(rom_sram, rom_base, 32768);
+        gpio_put(PIN_WAIT, 1);
+        rom_base = rom_sram;
     }
-}
 
-// loadrom_plain32 - Load a simple 32KB (or less) ROM into the MSX using SRAM buffer
-// 32KB ROMS have two pages of 16Kb each in the following areas:
-// 0x4000-0x7FFF and 0x8000-0xBFFF
-// AB is on 0x0000, 0x0001
-// 16KB ROMS have only one page in the 0x4000-0x7FFF area
-// AB is on 0x0000, 0x0001
-void loadrom_plain32_sram(uint32_t offset, uint32_t size)
-{
-    //setup the rom_sram buffer for the 32KB ROM
-    gpio_init(PIN_WAIT); // Init wait signal pin
-    gpio_set_dir(PIN_WAIT, GPIO_OUT); // Set the WAIT signal as output
-    gpio_put(PIN_WAIT, 0); // Wait until we are ready to read the ROM
-    memset(rom_sram, 0, size); // Clear the SRAM buffer
-    memcpy(rom_sram + 0x4000, rom + offset, size); //for 32KB ROMs we start at 0x4000
-    gpio_put(PIN_WAIT, 1); // Lets go!
-
-    // Set data bus to input mode
-    set_data_bus_input();
-    while (true) 
+    gpio_set_dir_in_masked(0xFF << 16);
+    while (true)
     {
-        bool sltsl = (gpio_get(PIN_SLTSL) == 0); // Slot select (active low)
-        bool rd = (gpio_get(PIN_RD) == 0);       // Read cycle (active low)
-
-        if (sltsl) 
+        if (!gpio_get(PIN_SLTSL))
         {
-            uint16_t addr = read_address_bus();
-            if (addr >= 0x4000 && addr <= 0xBFFF) // Check if the address is within the ROM range
+            uint16_t addr = gpio_get_all() & 0x00FFFF;
+            if ((addr >= 0x4000) && (addr <= 0xBFFF) && !gpio_get(PIN_RD))
             {
-                if (rd)
-                {
-                    set_data_bus_output(); // Drive data bus to output mode
-                    write_data_bus(rom_sram[addr]);  // Drive data onto the bus
-                    while (gpio_get(PIN_RD) == 0)  // Wait until the read cycle completes (RD goes high)
-                    {
-                        tight_loop_contents();
-                    }
-                    set_data_bus_input(); // Return data lines to input mode after cycle completes
-                }
-            } 
-        } 
+                uint8_t data = rom_base[addr - 0x4000];
+                gpio_set_dir_out_masked(0xFF << 16);
+                gpio_put_masked(0xFF0000, (uint32_t)data << 16);
+                while (!gpio_get(PIN_RD))
+                    tight_loop_contents();
+                gpio_set_dir_in_masked(0xFF << 16);
+            }
+        }
     }
 }
 
@@ -253,71 +215,35 @@ void loadrom_plain32_sram(uint32_t offset, uint32_t size)
 // Those ROMs have three pages of 16Kb each in the following areas:
 // 0x0000-0x3FFF, 0x4000-0x7FFF and 0x8000-0xBFFF
 // AB is on 0x4000, 0x4001
-void __no_inline_not_in_flash_func(loadrom_linear48)(uint32_t offset)
+void __no_inline_not_in_flash_func(loadrom_linear48)(uint32_t offset, bool cache_enable)
 {
+    const uint8_t *rom_base = rom + offset;
+
+    if (cache_enable)
+    {
+        gpio_init(PIN_WAIT);
+        gpio_set_dir(PIN_WAIT, GPIO_OUT);
+        gpio_put(PIN_WAIT, 0);
+        memset(rom_sram, 0, 49152);
+        memcpy(rom_sram, rom_base, 49152);
+        gpio_put(PIN_WAIT, 1);
+        rom_base = rom_sram;
+    }
+    
     gpio_set_dir_in_masked(0xFF << 16); // Set data bus to input mode
     while (true) 
     {
-        // Check control signals
-        bool sltsl = !(gpio_get(PIN_SLTSL)); // Slot selected (active low)
-        bool rd = !(gpio_get(PIN_RD));       // Read cycle (active low)
-
-        if (sltsl)
+        if (!gpio_get(PIN_SLTSL))
         {
             uint16_t addr = gpio_get_all() & 0x00FFFF; // Read the address bus
-            if (addr >= 0x0000 && addr <= 0xBFFF) // Check if the address is within the ROM range
+            if ((addr >= 0x0000) && (addr <= 0xBFFF) && !gpio_get(PIN_RD)) // Check if the address is within the ROM range
             {
-                if (rd)
-                {
-                    uint32_t rom_addr = offset + addr; // Calculate flash address
-                    gpio_set_dir_out_masked(0xFF << 16); // Set data bus to output mode
-                    gpio_put_masked(0xFF0000, rom[rom_addr] << 16); // Write the data to the data bus
-                    while (gpio_get(PIN_RD) == 0) // Wait until the read cycle completes (RD goes high)
-                    {
-                        tight_loop_contents();
-                    }
-                    gpio_set_dir_in_masked(0xFF << 16); // Set data bus to input mode
-                }
-            }
-        }
-    }
-}
-
-// loadrom_linear48 - Load a simple 48KB Linear0 ROM into the MSX using SRAM buffer
-// Those ROMs have three pages of 16Kb each in the following areas:
-// 0x0000-0x3FFF, 0x4000-0x7FFF and 0x8000-0xBFFF
-// AB is on 0x4000, 0x4001
-void loadrom_linear48_sram(uint32_t offset, uint32_t size)
-{
-    // load the ROM into the SRAM buffer
-    gpio_init(PIN_WAIT); gpio_set_dir(PIN_WAIT, GPIO_OUT);
-    gpio_put(PIN_WAIT, 0); // Wait until we are ready to read the ROM
-    memset(rom_sram, 0, size); // Clear the SRAM buffer
-    memcpy(rom_sram, rom + offset, size);  // for 48KB Linear0 ROMs we start at 0x0000
-    gpio_put(PIN_WAIT, 1); // Lets go!
-
-    set_data_bus_input();     // Set data bus to input mode
-    while (true) 
-    {
-        // Check control signals
-        bool sltsl = (gpio_get(PIN_SLTSL) == 0); // Slot select (active low)
-        bool rd = (gpio_get(PIN_RD) == 0);       // Read cycle (active low)
-
-        if (sltsl)
-        {
-            uint16_t addr = read_address_bus();
-            if (rd)
-            {
-                if (addr >= 0x0000 && addr <= 0xBFFF) // Check if the address is within the ROM range
-                {
-                    set_data_bus_output();  // Drive data bus to output mode
-                    write_data_bus(rom_sram[addr]); // Drive data onto the bus
-                    while (gpio_get(PIN_RD) == 0) // Wait until the read cycle completes (RD goes high)
-                    {
-                        tight_loop_contents();
-                    }
-                    set_data_bus_input(); // Return data lines to input mode after cycle completes
-                }
+                uint8_t data = rom_base[addr];
+                gpio_set_dir_out_masked(0xFF << 16);
+                gpio_put_masked(0xFF0000, (uint32_t)data << 16);
+                while (!gpio_get(PIN_RD))
+                    tight_loop_contents();
+                gpio_set_dir_in_masked(0xFF << 16);
             }
         }
     }
@@ -331,9 +257,28 @@ void loadrom_linear48_sram(uint32_t offset, uint32_t size)
 // And the address to change banks are:
 // Bank 1: 5000h - 57FFh (5000h used), Bank 2: 7000h - 77FFh (7000h used), Bank 3: 9000h - 97FFh (9000h used), Bank 4: B000h - B7FFh (B000h used)
 // AB is on 0x0000, 0x0001
-void __no_inline_not_in_flash_func(loadrom_konamiscc)(uint32_t offset)
+void __no_inline_not_in_flash_func(loadrom_konamiscc)(uint32_t offset, bool cache_enable)
 {
     uint8_t bank_registers[4] = {0, 1, 2, 3}; // Initial banks 0-3 mapped
+    uint32_t cached_length = 0;
+
+    if (cache_enable)
+    {
+        gpio_init(PIN_WAIT);
+        gpio_set_dir(PIN_WAIT, GPIO_OUT);
+        gpio_put(PIN_WAIT, 0);
+
+        uint32_t bytes_to_cache = active_rom_size;
+        if (bytes_to_cache == 0 || bytes_to_cache > sizeof(rom_sram))
+        {
+            bytes_to_cache = sizeof(rom_sram);
+        }
+
+        memset(rom_sram, 0, bytes_to_cache);
+        memcpy(rom_sram, rom + offset, bytes_to_cache);
+        gpio_put(PIN_WAIT, 1);
+        cached_length = bytes_to_cache;
+    }
 
     gpio_set_dir_in_masked(0xFF << 16); // Set data bus to input mode
     while (true) 
@@ -351,8 +296,22 @@ void __no_inline_not_in_flash_func(loadrom_konamiscc)(uint32_t offset)
                 if (rd) 
                 {
                     gpio_set_dir_out_masked(0xFF << 16); // Set data bus to output mode
-                    uint32_t rom_offset = offset + (bank_registers[(addr - 0x4000) >> 13] * 0x2000) + (addr & 0x1FFF); // Calculate the ROM offset
-                    gpio_put_masked(0xFF0000, rom[rom_offset] << 16); // Write the data to the data bus
+                    uint32_t const rom_offset = offset + (bank_registers[(addr - 0x4000) >> 13] * 0x2000u) + (addr & 0x1FFFu); // Calculate the ROM offset
+
+                    uint8_t data;
+                    uint32_t const relative_offset = (rom_offset >= offset) ? (rom_offset - offset) : cached_length;
+                    if (cache_enable && relative_offset < cached_length)
+                    {
+                        data = rom_sram[relative_offset];
+                    }
+                    else
+                    {
+                        gpio_put(PIN_WAIT, 0);
+                        data = rom[rom_offset];
+                        gpio_put(PIN_WAIT, 1);
+                    }
+
+                    gpio_put_masked(0xFF0000, (uint32_t)data << 16); // Write the data to the data bus
                     while (!(gpio_get(PIN_RD)))  // Wait until the read cycle completes (RD goes high)
                     {
                         tight_loop_contents();
@@ -362,13 +321,13 @@ void __no_inline_not_in_flash_func(loadrom_konamiscc)(uint32_t offset)
                 {
                     // Handle writes to bank switching addresses
                     if ((addr >= 0x5000)  && (addr <= 0x57FF)) { 
-                        bank_registers[0] = read_data_bus(); // Read the data bus and store in bank register
+                        bank_registers[0] = (gpio_get_all() >> 16) & 0xFF; // Read the data bus and store in bank register
                     } else if ((addr >= 0x7000) && (addr <= 0x77FF)) {
-                        bank_registers[1] = read_data_bus();
+                        bank_registers[1] = (gpio_get_all() >> 16) & 0xFF;
                     } else if ((addr >= 0x9000) && (addr <= 0x97FF)) {
-                        bank_registers[2] = read_data_bus();
+                        bank_registers[2] = (gpio_get_all() >> 16) & 0xFF;
                     } else if ((addr >= 0xB000) && (addr <= 0xB7FF)) {
-                        bank_registers[3] = read_data_bus();
+                        bank_registers[3] = (gpio_get_all() >> 16) & 0xFF;
                     }
 
                     while (!(gpio_get(PIN_WR)))
@@ -382,87 +341,36 @@ void __no_inline_not_in_flash_func(loadrom_konamiscc)(uint32_t offset)
 }
 
 
-// loadrom_konamiscc - Load a Konami SCC ROM (maximum of 128KB) into the MSX using SRAM buffer
-// The KonamiSCC ROMs are divided into 8KB segments, managed by a memory mapper that allows dynamic switching of these segments 
-// into the MSX's address space. Since the size of the mapper is 8Kb, the memory banks are:
-//
-// Bank 1: 4000h - 5FFFh , Bank 2: 6000h - 7FFFh, Bank 3: 8000h - 9FFFh, Bank 4: A000h - BFFFh
-//
-// And the address to change banks are:
-//
-// Bank 1: 5000h - 57FFh (5000h used), Bank 2: 7000h - 77FFh (7000h used), Bank 3: 9000h - 97FFh (9000h used), Bank 4: B000h - B7FFh (B000h used)
-// AB is on 0x0000, 0x0001
-void loadrom_konamiscc_sram(uint32_t offset, uint32_t size)
-{
-    if (size > MAX_MEM_SIZE)
-    {
-        return;
-    }
-
-    // Load the ROM into the SRAM buffer
-    gpio_init(PIN_WAIT); gpio_set_dir(PIN_WAIT, GPIO_OUT);
-    gpio_put(PIN_WAIT, 0); // Wait until we are ready to read the ROM
-    memset(rom_sram, 0, size+offset); // Clear the SRAM buffer
-    memcpy(rom_sram, rom, size+offset);  // for 128KB KonamiSCC ROMs we start at 0x0000
-    gpio_put(PIN_WAIT, 1); // Lets go!
-
-    uint8_t bank_registers[4] = {0, 1, 2, 3}; // Initial banks 0-3 mapped
-
-    set_data_bus_input();
-    while (true) 
-    {
-        bool sltsl = (gpio_get(PIN_SLTSL) == 0); // Slot selected (active low)
-        bool rd = (gpio_get(PIN_RD) == 0);       // Read cycle (active low)
-        bool wr = (gpio_get(PIN_WR) == 0);       // Write cycle (active low)
-
-        if (sltsl)
-        {
-            uint16_t addr = read_address_bus();
-            if (addr >= 0x4000 && addr <= 0xBFFF) 
-            {
-                if (rd) 
-                {
-                    uint16_t bank_index = (addr - 0x4000) / 0x2000; // Calculate the bank index
-                    uint16_t bank_offset = addr & 0x1FFF; // Calculate the offset within the bank
-                    uint32_t rom_offset = (bank_registers[bank_index] * 0x2000) + bank_offset + offset; // Calculate the ROM offset
-                    set_data_bus_output();
-                    write_data_bus(rom_sram[rom_offset]); // Drive data onto the bus
-                    while (gpio_get(PIN_RD) == 0) 
-                    {
-                        tight_loop_contents();
-                    }
-                    set_data_bus_input();
-                } else if (wr) 
-                {
-                    // Handle writes to bank switching addresses
-                    if (addr == 0x5000) {
-                        bank_registers[0] = read_data_bus(); // Read the data bus and store in bank register
-                    } else if (addr == 0x7000) {
-                        bank_registers[1] = read_data_bus();
-                    } else if (addr == 0x9000) {
-                        bank_registers[2] = read_data_bus();
-                    } else if (addr == 0xB000) {
-                        bank_registers[3] = read_data_bus();
-                    }
-                }
-            }
-        }
-    }
-}
 
 // loadrom_konami - Load a Konami (without SCC) ROM into the MSX directly from the pico flash
 // The Konami (without SCC) ROM is divided into 8KB segments, managed by a memory mapper that allows dynamic switching of these segments into the MSX's address space
 // Since the size of the mapper is 8Kb, the memory banks are:
-//
 //  Bank 1: 4000h - 5FFFh, Bank 2: 6000h - 7FFFh, Bank 3: 8000h - 9FFFh, Bank 4: A000h - BFFFh
-//
 // And the addresses to change banks are:
-//
 //	Bank 1: <none>, Bank 2: 6000h - 67FFh (6000h used), Bank 3: 8000h - 87FFh (8000h used), Bank 4: A000h - A7FFh (A000h used)
 // AB is on 0x0000, 0x0001
-void __no_inline_not_in_flash_func(loadrom_konami)(uint32_t offset)
+void __no_inline_not_in_flash_func(loadrom_konami)(uint32_t offset, bool cache_enable)
 {
     uint8_t bank_registers[4] = {0, 1, 2, 3}; // Initial banks 0-3 mapped
+    uint32_t cached_length = 0;
+
+    if (cache_enable)
+    {
+        gpio_init(PIN_WAIT);
+        gpio_set_dir(PIN_WAIT, GPIO_OUT);
+        gpio_put(PIN_WAIT, 0);
+
+        uint32_t bytes_to_cache = active_rom_size;
+        if (bytes_to_cache == 0 || bytes_to_cache > sizeof(rom_sram))
+        {
+            bytes_to_cache = sizeof(rom_sram);
+        }
+
+        memset(rom_sram, 0, bytes_to_cache);
+        memcpy(rom_sram, rom + offset, bytes_to_cache);
+        gpio_put(PIN_WAIT, 1);
+        cached_length = bytes_to_cache;
+    }
 
     gpio_set_dir_in_masked(0xFF << 16);
     while (true) 
@@ -480,8 +388,22 @@ void __no_inline_not_in_flash_func(loadrom_konami)(uint32_t offset)
                 if (rd) 
                 {
                     gpio_set_dir_out_masked(0xFF << 16);
-                    uint32_t rom_offset = offset + (bank_registers[(addr - 0x4000) >> 13] * 0x2000) + (addr & 0x1FFF); // Calculate the ROM offset
-                    gpio_put_masked(0xFF0000, rom[rom_offset] << 16);
+                    uint32_t const rom_offset = offset + (bank_registers[(addr - 0x4000) >> 13] * 0x2000u) + (addr & 0x1FFFu); // Calculate the ROM offset
+
+                    uint8_t data;
+                    uint32_t const relative_offset = (rom_offset >= offset) ? (rom_offset - offset) : cached_length;
+                    if (cache_enable && relative_offset < cached_length)
+                    {
+                        data = rom_sram[relative_offset];
+                    }
+                    else
+                    {
+                        gpio_put(PIN_WAIT, 0);
+                        data = rom[rom_offset];
+                        gpio_put(PIN_WAIT, 1);
+                    }
+
+                    gpio_put_masked(0xFF0000, (uint32_t)data << 16);
                     while (!(gpio_get(PIN_RD))) 
                     {
                         tight_loop_contents();
@@ -491,11 +413,11 @@ void __no_inline_not_in_flash_func(loadrom_konami)(uint32_t offset)
                 }else if (wr) {
                     // Handle writes to bank switching addresses
                     if ((addr >= 0x6000) && (addr <= 0x67FF)) {
-                        bank_registers[1] = read_data_bus();
+                        bank_registers[1] = (gpio_get_all() >> 16) & 0xFF;
                     } else if ((addr >= 0x8000) && (addr <= 0x87FF)) {
-                        bank_registers[2] = read_data_bus();
+                        bank_registers[2] = (gpio_get_all() >> 16) & 0xFF;
                     } else if ((addr >= 0xA000) && (addr <= 0xA7FF)) {
-                        bank_registers[3] = read_data_bus();
+                        bank_registers[3] = (gpio_get_all() >> 16) & 0xFF;
                     }
 
                     while (!(gpio_get(PIN_WR))) 
@@ -508,88 +430,36 @@ void __no_inline_not_in_flash_func(loadrom_konami)(uint32_t offset)
     }
 }
 
-
-// loadrom_konami - Load a Konami (without SCC) ROM (MAXIMUM of 128KB) into the MSX using SRAM buffer
-// The Konami (without SCC) ROM is divided into 8KB segments, managed by a memory mapper that allows dynamic switching of these segments into the MSX's address space
-// Since the size of the mapper is 8Kb, the memory banks are:
-//
-// Bank 1: 4000h - 5FFFh, Bank 2: 6000h - 7FFFh, Bank 3: 8000h - 9FFFh, Bank 4: A000h - BFFFh
-//
-// And the addresses to change banks are:
-//
-// Bank 1: <none>, Bank 2: 6000h - 67FFh (6000h used), Bank 3: 8000h - 87FFh (8000h used), Bank 4: A000h - A7FFh (A000h used)
-// AB is on 0x0000, 0x0001
-void loadrom_konami_sram(uint32_t offset, uint32_t size)
-{
-    gpio_init(PIN_WAIT); gpio_set_dir(PIN_WAIT, GPIO_OUT);
-    gpio_put(PIN_WAIT, 0); // Wait until we are ready to read the ROM
-    memset(rom_sram, 0, size+offset); // Clear the SRAM buffer
-    memcpy(rom_sram, rom, size+offset);  // for 12KB KonamiSCC ROMs we start at 0x0000
-    gpio_put(PIN_WAIT, 1); // Lets go!
-
-    uint8_t bank_registers[4] = {0, 1, 2, 3}; // Initial banks 0-3 mapped
-
-    set_data_bus_input();
-    while (true) 
-    {
-        bool sltsl = (gpio_get(PIN_SLTSL) == 0); // Slot selected (active low)
-        bool rd = (gpio_get(PIN_RD) == 0);       // Read cycle (active low)
-        bool wr = (gpio_get(PIN_WR) == 0);       // Write cycle (active low)
-
-        if (sltsl) {
-            uint16_t addr = read_address_bus();
-
-            if (rd) {
-                // Handle read requests within the ROM address range
-                if (addr >= 0x4000 && addr <= 0xBFFF) {
-                    // Determine the bank index based on the address
-                    uint8_t bank_index = (addr - 0x4000) / 0x2000;
-                    uint16_t bank_offset = addr & 0x1FFF;
-                    uint32_t rom_offset = (bank_registers[bank_index] * 0x2000) + bank_offset + offset;
-
-                    // Set data bus to output mode and write the data
-                    set_data_bus_output();
-                    write_data_bus(rom_sram[rom_offset]);
-
-                    // Wait for the read cycle to complete
-                    while (gpio_get(PIN_RD) == 0) {
-                        tight_loop_contents();
-                    }
-
-                    // Return data bus to input mode after the read cycle
-                    set_data_bus_input();
-                }
-            } else if (wr) {
-                // Handle writes to bank switching addresses
-                if (addr == 0x6000) {
-                    bank_registers[1] = read_data_bus();
-                } else if (addr == 0x8000) {
-                    bank_registers[2] = read_data_bus();
-                } else if (addr == 0xA000) {
-                    bank_registers[3] = read_data_bus();
-                }
-                while (!(gpio_get(PIN_WR))) {
-                    tight_loop_contents();
-                }
-            }
-        }
-    }
-}
-
 // loadrom_ascii8 - Load an ASCII8 ROM into the MSX directly from the pico flash
 // The ASCII8 ROM is divided into 8KB segments, managed by a memory mapper that allows dynamic switching of these segments into the MSX's address space
 // Since the size of the mapper is 8Kb, the memory banks are:
-// 
 // Bank 1: 4000h - 5FFFh , Bank 2: 6000h - 7FFFh, Bank 3: 8000h - 9FFFh, Bank 4: A000h - BFFFh
-//
 // And the address to change banks are:
-// 
 // Bank 1: 6000h - 67FFh (6000h used), Bank 2: 6800h - 6FFFh (6800h used), Bank 3: 7000h - 77FFh (7000h used), Bank 4: 7800h - 7FFFh (7800h used)
 // AB is on 0x0000, 0x0001
-void __no_inline_not_in_flash_func(loadrom_ascii8)(uint32_t offset)
+void __no_inline_not_in_flash_func(loadrom_ascii8)(uint32_t offset, bool cache_enable)
 {
-
     uint8_t bank_registers[4] = {0, 1, 2, 3}; // Initial banks 0-3 mapped
+    const uint8_t *rom_base = rom + offset;
+    uint32_t cached_length = 0;
+
+    if (cache_enable)
+    {
+        gpio_init(PIN_WAIT);
+        gpio_set_dir(PIN_WAIT, GPIO_OUT);
+        gpio_put(PIN_WAIT, 0);
+
+        uint32_t bytes_to_cache = active_rom_size;
+        if (bytes_to_cache == 0 || bytes_to_cache > sizeof(rom_sram))
+        {
+            bytes_to_cache = sizeof(rom_sram);
+        }
+
+        memset(rom_sram, 0, bytes_to_cache);
+        memcpy(rom_sram, rom_base, bytes_to_cache);
+        gpio_put(PIN_WAIT, 1);
+        cached_length = bytes_to_cache;
+    }
 
     gpio_set_dir_in_masked(0xFF << 16);
     while (true) 
@@ -605,22 +475,35 @@ void __no_inline_not_in_flash_func(loadrom_ascii8)(uint32_t offset)
                 if (rd) 
                 {
                     gpio_set_dir_out_masked(0xFF << 16); // Set data bus to output mode
-                    uint32_t rom_offset = offset + (bank_registers[(addr - 0x4000) >> 13] * 0x2000) + (addr & 0x1FFF); // Calculate the ROM offset
-                    gpio_put_masked(0xFF0000, rom[rom_offset] << 16); // Write the data to the data bus
-                    while (!(gpio_get(PIN_RD)))  { // Wait for the read cycle to complete
-                        tight_loop_contents();
+                    uint8_t const bank = bank_registers[(addr - 0x4000) >> 13];
+                    uint32_t const rom_offset = offset + (bank * 0x2000u) + (addr & 0x1FFFu); // Calculate the ROM offset
+
+                    uint8_t data;
+                    uint32_t const relative_offset = (rom_offset >= offset) ? (rom_offset - offset) : cached_length;
+                    if (cache_enable && relative_offset < cached_length)
+                    {
+                        data = rom_sram[relative_offset];
                     }
+                    else
+                    {
+                        gpio_put(PIN_WAIT, 0);
+                        data = rom[rom_offset];
+                        gpio_put(PIN_WAIT, 1);
+                    }
+
+                    gpio_put_masked(0xFF0000, (uint32_t)data << 16); // Write the data to the data bus
+                    while (!(gpio_get(PIN_RD)))  { tight_loop_contents(); } // Wait until the read cycle completes (RD goes high)        }
                     gpio_set_dir_in_masked(0xFF << 16); // Return data bus to input mode after the read cycle
                 } else if (wr)  // Handle writes to bank switching addresses
                 { 
                     if ((addr >= 0x6000) && (addr <= 0x67FF)) { 
-                        bank_registers[0] = read_data_bus(); // Read the data bus and store in bank register
+                        bank_registers[0] = (gpio_get_all() >> 16) & 0xFF; // Read the data bus and store in bank register
                     } else if ((addr >= 0x6800) && (addr <= 0x6FFF)) {
-                        bank_registers[1] = read_data_bus();
+                        bank_registers[1] = (gpio_get_all() >> 16) & 0xFF;
                     } else if ((addr >= 0x7000) && (addr <= 0x77FF)) {
-                        bank_registers[2] = read_data_bus();
+                        bank_registers[2] = (gpio_get_all() >> 16) & 0xFF;
                     } else if ((addr >= 0x7800) && (addr <= 0x7FFF)) {
-                        bank_registers[3] = read_data_bus();
+                        bank_registers[3] = (gpio_get_all() >> 16) & 0xFF;
                     }
 
                     while (!(gpio_get(PIN_WR))) 
@@ -633,84 +516,34 @@ void __no_inline_not_in_flash_func(loadrom_ascii8)(uint32_t offset)
     }
 }
 
-// loadrom_ascii8 - Load an ASCII8 ROM into the MSX using SRAM buffer
-// The ASCII8 ROM is divided into 8KB segments, managed by a memory mapper that allows dynamic switching of these segments into the MSX's address space
-// Since the size of the mapper is 8Kb, the memory banks are:
-// 
-// Bank 1: 4000h - 5FFFh , Bank 2: 6000h - 7FFFh, Bank 3: 8000h - 9FFFh, Bank 4: A000h - BFFFh
-//
-// And the address to change banks are:
-// 
-// Bank 1: 6000h - 67FFh (6000h used), Bank 2: 6800h - 6FFFh (6800h used), Bank 3: 7000h - 77FFh (7000h used), Bank 4: 7800h - 7FFFh (7800h used)
-// AB is on 0x0000, 0x0001
-void loadrom_ascii8_sram(uint32_t offset, uint32_t size)
-{
-    gpio_init(PIN_WAIT); gpio_set_dir(PIN_WAIT, GPIO_OUT);
-    gpio_put(PIN_WAIT, 0); // Wait until we are ready to read the ROM
-    memset(rom_sram, 0, MAX_MEM_SIZE); // Clear the SRAM buffer
-    memcpy(rom_sram, rom + offset, size);  // for 12KB KonamiSCC ROMs we start at 0x0000
-    gpio_put(PIN_WAIT, 1); // Lets go!
-
-    uint8_t bank_registers[4] = {0, 1, 2, 3}; // Initial banks 0-3 mapped
-
-    set_data_bus_input();
-    while (true) 
-    {
-        bool sltsl = (gpio_get(PIN_SLTSL) == 0); // Slot selected (active low)
-        bool rd = (gpio_get(PIN_RD) == 0);       // Read cycle (active low)
-        bool wr = (gpio_get(PIN_WR) == 0);       // Write cycle (active low)
-
-        if (sltsl) {
-            uint16_t addr = read_address_bus();
-
-            if (rd) {
-                // Handle read requests within the ROM address range
-                if (addr >= 0x4000 && addr <= 0xBFFF) {
-                    // Determine the bank index based on the address
-                    uint32_t rom_offset = (bank_registers[(addr - 0x4000) / 0x2000] * 0x2000) + (addr & 0x1FFF);
-
-                    // Set data bus to output mode and write the data
-                    set_data_bus_output();
-                    write_data_bus(rom_sram[rom_offset]);
-
-                    // Wait for the read cycle to complete
-                    while (gpio_get(PIN_RD) == 0) {
-                        tight_loop_contents();
-                    }
-
-                    // Return data bus to input mode after the read cycle
-                    set_data_bus_input();
-                }
-            } else if (wr) {
-                // Handle writes to bank switching addresses
-                if (addr == 0x6000) {
-                    bank_registers[0] = read_data_bus(); // Read the data bus and store in bank register
-                } else if (addr == 0x6800) {
-                    bank_registers[1] = read_data_bus();
-                } else if (addr == 0x7000) {
-                    bank_registers[2] = read_data_bus();
-                } else if (addr == 0x7800) {
-                    bank_registers[3] = read_data_bus();
-                }
-                while (!(gpio_get(PIN_WR))) {
-                    tight_loop_contents();
-                }
-            }
-        }
-    }
-}
-
 // loadrom_ascii16 - Load an ASCII16 ROM into the MSX directly from the pico flash
 // The ASCII16 ROM is divided into 16KB segments, managed by a memory mapper that allows dynamic switching of these segments into the MSX's address space
 // Since the size of the mapper is 16Kb, the memory banks are:
-//
 // Bank 1: 4000h - 7FFFh , Bank 2: 8000h - BFFFh
-//
 // And the address to change banks are:
 // Bank 1: 6000h - 67FFh (6000h used), Bank 2: 7000h - 77FFh (7000h and 77FFh used)
-void __no_inline_not_in_flash_func(loadrom_ascii16)(uint32_t offset)
+void __no_inline_not_in_flash_func(loadrom_ascii16)(uint32_t offset, bool cache_enable)
 {
     uint8_t bank_registers[2] = {0, 1}; // Initial banks 0 and 1 mapped
+    uint32_t cached_length = 0;
+
+    if (cache_enable)
+    {
+        gpio_init(PIN_WAIT);
+        gpio_set_dir(PIN_WAIT, GPIO_OUT);
+        gpio_put(PIN_WAIT, 0);
+
+        uint32_t bytes_to_cache = active_rom_size;
+        if (bytes_to_cache == 0 || bytes_to_cache > sizeof(rom_sram))
+        {
+            bytes_to_cache = sizeof(rom_sram);
+        }
+
+        memset(rom_sram, 0, bytes_to_cache);
+        memcpy(rom_sram, rom + offset, bytes_to_cache);
+        gpio_put(PIN_WAIT, 1);
+        cached_length = bytes_to_cache;
+    }
 
     gpio_set_dir_in_masked(0xFF << 16);
     while (true) {
@@ -725,8 +558,23 @@ void __no_inline_not_in_flash_func(loadrom_ascii16)(uint32_t offset)
             {
                 if (rd) {
                     gpio_set_dir_out_masked(0xFF << 16); // Set data bus to output mode
-                    uint32_t rom_offset = offset + (bank_registers[(addr >> 15) & 1] << 14) + (addr & 0x3FFF);
-                    gpio_put_masked(0xFF0000, rom[rom_offset] << 16); // Write the data to the data bus
+                    uint8_t const bank = (addr >> 15) & 1;
+                    uint32_t const rom_offset = offset + ((uint32_t)bank_registers[bank] << 14) + (addr & 0x3FFF);
+
+                    uint8_t data;
+                    uint32_t const relative_offset = (rom_offset >= offset) ? (rom_offset - offset) : cached_length;
+                    if (cache_enable && relative_offset < cached_length)
+                    {
+                        data = rom_sram[relative_offset];
+                    }
+                    else
+                    {
+                        gpio_put(PIN_WAIT, 0);
+                        data = rom[rom_offset];
+                        gpio_put(PIN_WAIT, 1);
+                    }
+
+                    gpio_put_masked(0xFF0000, (uint32_t)data << 16); // Write the data to the data bus
                     while (!(gpio_get(PIN_RD)))  // Wait for the read cycle to complete
                     {
                         tight_loop_contents();
@@ -790,7 +638,12 @@ void __no_inline_not_in_flash_func(loadrom_neo8)(uint32_t offset)
                     {
                         uint32_t segment = bank_registers[bank_index] & 0x0FFF; // 12-bit segment number
                         uint32_t rom_offset = offset + (segment << 13) + (addr & 0x1FFF); // Calculate ROM offset
-                        gpio_put_masked(0xFF0000, rom[rom_offset] << 16); // Place data on data bus
+
+                        gpio_put(PIN_WAIT, 0);
+                        uint8_t data = rom[rom_offset];
+                        gpio_put(PIN_WAIT, 1);
+                        
+                        gpio_put_masked(0xFF0000, data << 16); // Place data on data bus
                     }
                     else
                     {
@@ -853,7 +706,7 @@ void __no_inline_not_in_flash_func(loadrom_neo8)(uint32_t offset)
 
                     if (bank_index < 6)
                     {
-                        uint8_t data = read_data_bus() & 0xFF; // Read 8-bit data from bus
+                        uint8_t data = (gpio_get_all() >> 16) & 0xFF;
                         if (addr & 0x01)
                         {
                             // Write to MSB
@@ -916,7 +769,12 @@ void __no_inline_not_in_flash_func(loadrom_neo16)(uint32_t offset)
                     {
                         uint32_t segment = bank_registers[bank_index] & 0x0FFF; // 12-bit segment number
                         uint32_t rom_offset = offset + (segment << 14) + (addr & 0x3FFF); // Calculate ROM offset
-                        gpio_put_masked(0xFF0000, rom[rom_offset] << 16); // Place data on data bus
+
+                        gpio_put(PIN_WAIT, 0);
+                        uint8_t data = rom[rom_offset];
+                        gpio_put(PIN_WAIT, 1);
+
+                        gpio_put_masked(0xFF0000, data << 16); // Place data on data bus
                     }
                     else
                     {
@@ -961,7 +819,7 @@ void __no_inline_not_in_flash_func(loadrom_neo16)(uint32_t offset)
 
                     if (bank_index < 3)
                     {
-                        uint8_t data = read_data_bus() & 0xFF; // Read 8-bit data from bus
+                        uint8_t data = (gpio_get_all() >> 16) & 0xFF; // Read 8-bit data from bus
                         if (addr & 0x01)
                         {
                             // Write to MSB
@@ -994,7 +852,7 @@ void __no_inline_not_in_flash_func(loadrom_neo16)(uint32_t offset)
 int __no_inline_not_in_flash_func(main)()
 {
     // Set system clock to 260MHz
-    set_sys_clock_khz(260000, true);
+    set_sys_clock_khz(250000, true);
     //
     // Initialize stdio
     stdio_init_all();
@@ -1027,34 +885,28 @@ int __no_inline_not_in_flash_func(main)()
     {
         case 1:
         case 2:
-            loadrom_plain32(0x1d); // flash version
-            //loadrom_plain32_sram(0x1d, rom_size); //sram version
+            loadrom_plain32(ROM_RECORD_SIZE, true); 
             break;
         case 3:
-            loadrom_konamiscc(0x1d); // flash version
-            //loadrom_konamiscc_sram(0x1d, rom_size);
+            loadrom_konamiscc(ROM_RECORD_SIZE, true); 
             break;
         case 4:
-            loadrom_linear48(0x1d); // flash version
-            //loadrom_linear48_sram(0x1d, rom_size); //sram version
+            loadrom_linear48(ROM_RECORD_SIZE, true); 
             break;
         case 5:
-            loadrom_ascii8(0x1d); // flash version
-            //loadrom_ascii8_sram(0x1d, rom_size); //sram version
+            loadrom_ascii8(ROM_RECORD_SIZE, true); 
             break;
         case 6:
-            loadrom_ascii16(0x1d); //flash version
-            //loadrom_ascii16_sram(0x1d, rom_size); //sram version
+            loadrom_ascii16(ROM_RECORD_SIZE, true); 
             break;
         case 7:
-            loadrom_konami(0x1d); //flash version
-            //loadrom_konami_sram(0x1d, rom_size); //sram version
+            loadrom_konami(ROM_RECORD_SIZE, true); 
             break;
         case 8:
-            loadrom_neo8(0x1d); //flash version
+            loadrom_neo8(ROM_RECORD_SIZE); //flash version
             break;
         case 9:
-            loadrom_neo16(0x1d); //flash version
+            loadrom_neo16(ROM_RECORD_SIZE); //flash version
             break;
         default:
             //printf("Unknown ROM type: %d\n", 1);

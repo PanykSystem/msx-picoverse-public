@@ -21,7 +21,19 @@ UTLDIR  := utils
 
 # Build flags
 VERBOSE ?= --verbose
+
+# Debug control: set DEBUG=1 when invoking make to enable debug symbols and -DDEBUG
+# Example: `make DEBUG=1`
+DEBUG ?= 0
+
+ifeq ($(DEBUG),1)
+CCFLAGS := -g -DDEBUG
+else
 CCFLAGS := -g
+endif
+
+# Application metadata
+VERSION ?= v1.01
 
 # Project files
 SOURCES := loadrom.c 
@@ -40,11 +52,11 @@ all: clean compile package
 
 compile: $(BINDIR)/$(OUTFILE)
 
-package: $(DISDIR)/$(OUTFILE)
+package: $(DISDIR)/loadrom_$(VERSION).exe
 
 $(BINDIR)/$(OUTFILE): $(BINDIR) $(SRCDIR)/$(SOURCES) $(PICOBIN_H) $(PICOBIN)
 	@echo "Compiling $@"
-	$(CC) $(CCFLAGS) $(SRCDIR)/$(SOURCES) -o $@
+	$(CC) $(CCFLAGS) -DAPP_VERSION=\"$(VERSION)\" $(SRCDIR)/$(SOURCES) -o $@
 
 $(PICOBIN_H): $(PICOBIN)
 	@echo "Embedding Pico firmware into header"
@@ -56,12 +68,12 @@ $(BINDIR):
 $(DISDIR):
 	@mkdir $@
 
-$(DISDIR)/$(OUTFILE): $(DISDIR) $(BINDIR)/$(OUTFILE)
+$(DISDIR)/loadrom_$(VERSION).exe: $(DISDIR) $(BINDIR)/$(OUTFILE)
 	@echo "Packaging $@"
 	cp $(BINDIR)/$(OUTFILE) $@
 
 clean:
 	@echo "Cleaning ...."
-	$(RM) $(BINDIR)/*.exe $(BINDIR)/loadrom.uf2 $(SRCDIR)/loadrom.h
+	$(RM) $(BINDIR)/*.exe $(BINDIR)/*.uf2 $(SRCDIR)/loadrom.h
 	$(RM) $(DISDIR)/*
 

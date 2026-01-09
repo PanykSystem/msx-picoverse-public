@@ -57,7 +57,7 @@ all: clean compile package
 
 compile: $(BINDIR)/$(OUTFILE)
 
-package: $(DISDIR)/$(OUTFILE)
+package: $(DISDIR)/multirom_$(VERSION).exe
 
 
 $(BINDIR)/$(OUTFILE): $(BINDIR) $(SRCDIR)/$(SOURCES) $(PICOBIN_H) $(PICOBIN) $(MSXMENU_H) $(MSXMENU) $(NEXTOR_H) $(NEXTOR)
@@ -82,7 +82,7 @@ $(BINDIR):
 $(DISDIR):
 	@mkdir $@
 
-$(DISDIR)/$(OUTFILE): $(DISDIR) $(BINDIR)/$(OUTFILE)
+$(DISDIR)/multirom_$(VERSION).exe: $(DISDIR) $(BINDIR)/$(OUTFILE)
 	@echo "Packaging $@"
 	cp $(BINDIR)/$(OUTFILE) $@
 

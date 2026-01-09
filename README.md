@@ -10,12 +10,13 @@ PicoVerse is a community-driven effort to build versatile MSX cartridges powered
 
 > **Note:** There are reports that the PicoVerse is a copy of other projects. To avoid speculation, I am now making the source code publicly available on the software folders of this repository.
 
-The MultiROM tool and menu firmware were developed from scratch, with support to a wide number of mappers and features not found in other similar projects. The hardware designs, implementation strategy, documentation, and PC-side tooling are all original work by the author. The wiring was thought to ensure the best compatibility with the MSX bus and to allow easy assembly using widely available RP2040 and RP2350 boards. 
+Both LoadROM and MultiROM tools, as well as the menu firmware were developed from scratch, with support to a wide number of mappers and features not found in other similar projects. The hardware designs, implementation strategy, documentation, and PC-side tooling are all original work by the author. The wiring was thought to ensure the best compatibility with the MSX bus and to allow easy assembly using widely available RP2040 and RP2350 boards. 
 
 PicoVerse is designed as an open-source, independent, well-documented MSX cartridge platform. Compatibility with other projects is neither a goal nor guaranteed (I tested some without much success); running third‑party software on PicoVerse hardware, or PicoVerse firmware on other boards, is at your own risk. The source and design files are openly available so you can learn, experiment, and build on them for the MSX community, subject to the project license.
 
 ## Project Highlights
 - Multi-ROM loader with an on-screen menu and mapper auto-detection.
+- Single-ROM LoadROM workflow for instant booting of one title without entering the menu.
 - Ready-made Nextor builds with USB (RP2040) or microSD (RP2350) storage bridges.
 - PC-side tooling that generates UF2 images locally for quick drag-and-drop flashing.
 - Open hardware schematics, BOMs, and production-ready Gerbers.
@@ -23,10 +24,19 @@ PicoVerse is designed as an open-source, independent, well-documented MSX cartri
 
 ## Documentation
 
+**MultiROM Guides**
 - [PicoVerse 2040 MultiROM Guide, English version](/docs/msx-picoverse-2040-multirom-tool-manual.en-US.md)
 - [Guia MultiROM do PicoVerse 2040, versão em português](/docs/msx-picoverse-2040-multirom-tool-manual.pt-BR.md)
 - [PicoVerse 2040 マルチROMガイド（日本語版）](/docs/msx-picoverse-2040-multirom-tool-manual.ja-JP.md)
 - [Guía MultiROM PicoVerse 2040, versión en español](/docs/msx-picoverse-2040-multirom-tool-manual.es-ES.md)
+
+**LoadROM Guides**
+- [MSX PicoVerse 2040 LoadROM Tool Manual (English)](/docs/msx-picoverse-2040-loadrom-tool-manual.en-us.md)
+- [Manual de la Herramienta LoadROM (es-ES)](/docs/msx-picoverse-2040-loadrom-tool-manual.es-ES.md)
+- [LoadROM ツール マニュアル (ja-JP)](/docs/msx-picoverse-2040-loadrom-tool-manual.ja-JP.md)
+- [Manual da Ferramenta LoadROM (pt-BR)](/docs/msx-picoverse-2040-loadrom-tool-manual.pt-BR.md)
+
+**Reference Material**
 - [PicoVerse 2040 Features Overview](/docs/msx-picoverse-2040-features.md)
 - [PicoVerse 2350 Features Overview](/docs/msx-picoverse-2350-features.md)
 - [Nextor Pico Bridge Protocol](/docs/Nextor-Pico-Bridge-Protocol.md)
@@ -90,8 +100,8 @@ For design source files, firmware code, and ongoing development discussions, see
 1. **Pick your target board**: Select the hardware revision that matches the RP2040 or RP2350 carrier you own, then grab the corresponding Gerber/BOM pack.
 2. **Manufacture or assemble**: Send the Gerbers to your PCB house or build from an ordered kit. Follow the assembly notes included in each hardware bundle.
 3. **Generate the UF2 image**:
-   - Place your `.rom` files beside the MultiROM tool for your cartridge family (`2040/software/multirom/multirom.exe` or `2350/software/multirom/multirom.exe`).
-   - Run `multirom.exe` to build a new `multirom.uf2`; no prebuilt UF2 images are distributed.
+   - For multiple titles, place your `.rom` files beside the MultiROM tool for your cartridge family (`2040/software/multirom/multirom.exe` or `2350/software/multirom/multirom.exe`) and run `multirom.exe` to create `multirom.uf2`.
+   - For an instant boot into a single game, place the desired `.rom` next to `2040/software/loadrom/tool/loadrom.exe` and run `loadrom.exe <file> [-o custom.uf2]` to create a dedicated UF2 that skips the menu.
 4. **Flash the firmware**:
    - Hold BOOTSEL while connecting the cartridge to your PC via USB-C.
    - Copy the freshly generated `multirom.uf2` (or alternate UF2 you produced) to the RPI-RP2 drive that appears.
@@ -111,6 +121,21 @@ Navigate the menu using the keyboard arrow keys. Use the Up and Down keys to mov
 While in the menu, pressing the H key opens a help screen with basic instructions; press any key to return to the main menu. Once a ROM is launched, control is handed over entirely to the selected software, just as if it were a physical cartridge inserted into the MSX.
 
 Check the detailed MultiROM guide in the documentation folder for advanced features, troubleshooting tips, and mapper support details.
+
+## LoadROM Tool
+
+The LoadROM tool targets situations where you want the PicoVerse to behave like a traditional single-game cartridge. Instead of showing the MultiROM menu, the Pico boots straight into one ROM embedded in the UF2 image.
+
+- **Input**: exactly one `.ROM` file. Mapper type is auto-detected with the same heuristics as MultiROM, and you can still force a mapper via filename tags such as `.KonSCC.ROM` or `.PL-32.ROM`.
+- **Output**: `loadrom.uf2` by default, or any filename you pass via `-o`. The UF2 contains the firmware, a 59-byte configuration record (title, mapper, size, flash offset), and the ROM payload.
+- **Workflow**:
+   1. Open a Command Prompt or PowerShell window in `2040/software/loadrom/tool`.
+   2. Run `loadrom.exe -o mygame.uf2 \\path\\to\\Game.ROM` (the tool also accepts drag-and-drop onto the EXE).
+   3. Observe the reported ROM name, size, mapper status (auto vs forced), and Pico offset before the UF2 is written.
+   4. Put the Pico into BOOTSEL mode and copy the generated UF2 to the `RPI-RP2` drive.
+   5. Insert the cartridge into your MSX—on power-up the embedded game launches immediately.
+
+Consult the LoadROM manuals (English, Spanish, Japanese, and Brazilian Portuguese) linked above for screenshots, troubleshooting, and in-depth explanations of mapper forcing, UF2 structure, and limitations.
 
 ## Compatibility & Requirements
 - Works with MSX, MSX2, MSX2+, and MSX TurboR systems. Mapper support covers the most common game and utility formats.
