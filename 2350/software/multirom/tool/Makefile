@@ -33,7 +33,7 @@ CCFLAGS := -g
 endif
 
 # Application metadata
-VERSION ?= v1.00
+VERSION ?= v1.02
 
 # Project files
 SOURCES := multirom.c
@@ -56,7 +56,7 @@ all: clean compile package
 
 compile: $(BINDIR)/$(OUTFILE)
 
-package: $(DISDIR)/$(OUTFILE)
+package: $(DISDIR)/multirom_$(VERSION).exe
 
 $(BINDIR)/$(OUTFILE): $(BINDIR) $(SRCDIR)/$(SOURCES) $(PICOBIN_H) $(PICOBIN) $(MSXMENU_H) $(MSXMENU) $(NEXTOR_H) $(NEXTOR)
 	@echo "Compiling $@"
@@ -80,7 +80,7 @@ $(BINDIR):
 $(DISDIR):
 	@mkdir $@
 
-$(DISDIR)/$(OUTFILE): $(DISDIR) $(BINDIR)/$(OUTFILE)
+$(DISDIR)/multirom_$(VERSION).exe: $(DISDIR) $(BINDIR)/$(OUTFILE)
 	@echo "Packaging $@"
 	cp $(BINDIR)/$(OUTFILE) $@
 

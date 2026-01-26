@@ -36,7 +36,7 @@
 #define FLASH_START             0x10000000      // Start of the flash memory on the Raspberry Pi Pico
 #define MAX_ROM_FILES           128             // Maximum number of ROM files
 #define MAX_TOTAL_ROM_SIZE      (14U * 1024U * 1024U) // Cap combined ROM payload to 14 MB
-#define MAX_ROM_SIZE            16*1024*1024    // Maximum size of a ROM file
+#define MAX_ROM_SIZE            15*1024*1024    // Maximum size of a ROM file
 #define MIN_ROM_SIZE            8192            // Minimum size of a ROM file
 #define MAX_ANALYSIS_SIZE       131072          // 128KB for the mapper analysis
 #define CONFIG_RECORD_SIZE      (MAX_FILE_NAME_LENGTH + 1 + sizeof(uint32_t) + sizeof(uint32_t))

@@ -317,7 +317,9 @@ void __no_inline_not_in_flash_func(loadrom_konamiscc)(uint32_t offset, bool cach
                     }
                     else
                     {
+                        gpio_put(PIN_WAIT, 0);
                         data = rom[rom_offset];
+                        gpio_put(PIN_WAIT, 1);
                     }
 
                     gpio_put_masked(0xFF0000, (uint32_t)data << 16); // Write the data to the data bus
@@ -405,7 +407,9 @@ void __no_inline_not_in_flash_func(loadrom_konami)(uint32_t offset, bool cache_e
                     }
                     else
                     {
+                        gpio_put(PIN_WAIT, 0);
                         data = rom[rom_offset];
+                        gpio_put(PIN_WAIT, 1);
                     }
 
                     gpio_put_masked(0xFF0000, (uint32_t)data << 16);
@@ -491,7 +495,9 @@ void __no_inline_not_in_flash_func(loadrom_ascii8)(uint32_t offset, bool cache_e
                     }
                     else
                     {
+                        gpio_put(PIN_WAIT, 0);
                         data = rom[rom_offset];
+                        gpio_put(PIN_WAIT, 1);
                     }
 
                     gpio_put_masked(0xFF0000, (uint32_t)data << 16); // Write the data to the data bus
@@ -572,7 +578,9 @@ void __no_inline_not_in_flash_func(loadrom_ascii16)(uint32_t offset, bool cache_
                     }
                     else
                     {
+                        gpio_put(PIN_WAIT, 0);
                         data = rom[rom_offset];
+                        gpio_put(PIN_WAIT, 1);
                     }
 
                     gpio_put_masked(0xFF0000, (uint32_t)data << 16); // Write the data to the data bus
@@ -703,7 +711,10 @@ void __no_inline_not_in_flash_func(loadrom_neo8)(uint32_t offset)
                     {
                         uint32_t segment = bank_registers[bank_index] & 0x0FFF; // 12-bit segment number
                         uint32_t rom_offset = offset + (segment << 13) + (addr & 0x1FFF); // Calculate ROM offset
+
+                        gpio_put(PIN_WAIT, 0);
                         gpio_put_masked(0xFF0000, rom[rom_offset] << 16); // Place data on data bus
+                        gpio_put(PIN_WAIT, 1);
                     }
                     else
                     {
@@ -829,7 +840,10 @@ void __no_inline_not_in_flash_func(loadrom_neo16)(uint32_t offset)
                     {
                         uint32_t segment = bank_registers[bank_index] & 0x0FFF; // 12-bit segment number
                         uint32_t rom_offset = offset + (segment << 14) + (addr & 0x3FFF); // Calculate ROM offset
+
+                        gpio_put(PIN_WAIT, 0);
                         gpio_put_masked(0xFF0000, rom[rom_offset] << 16); // Place data on data bus
+                        gpio_put(PIN_WAIT, 1);
                     }
                     else
                     {

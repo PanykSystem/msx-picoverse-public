@@ -36,7 +36,7 @@
 #define FLASH_START             0x10000000      // Start of the flash memory on the Raspberry Pi Pico
 #define MAX_ROM_FILES           128             // Maximum number of ROM files
 #define MAX_TOTAL_ROM_SIZE      (14U * 1024U * 1024U) // Cap combined ROM payload to 14 MB
-#define MAX_ROM_SIZE            10*1024*1024    // Maximum size of a ROM file
+#define MAX_ROM_SIZE            15*1024*1024    // Maximum size of a ROM file
 #define MIN_ROM_SIZE            8192            // Minimum size of a ROM file
 #define MAX_ANALYSIS_SIZE       131072          // 128KB for the mapper analysis
 #define CONFIG_RECORD_SIZE      (MAX_FILE_NAME_LENGTH + 1 + sizeof(uint32_t) + sizeof(uint32_t))
@@ -374,9 +374,7 @@ void create_uf2_file(const uint8_t *data, size_t size, const char *uf2_filename)
 int main(int argc, char *argv[])
 {
     printf("MSX PICOVERSE 2350 MultiROM UF2 Creator %s\n", APP_VERSION);
-    printf("https://github.com/TheRetroHacker/msx-picoverse\n");
-    printf("(c) 2025 The Retro Hacker\n");
-    printf("MSX forever!\n\n");
+    printf("(c) 2025 The Retro Hacker\n\n");
 
     bool include_nextor = false;
     bool show_help = false;

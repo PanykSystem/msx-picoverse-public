@@ -8,33 +8,29 @@ PicoVerse is a community-driven effort to build versatile MSX cartridges powered
 |---------|---------|
 |![PicoVerse 2040 Label](/labels/PicoVerse_2040_Label_1.png) | ![PicoVerse 2350 Label](/labels/PicoVerse_2350_Label_1.png) |
 
-> **Note:** There are reports that the PicoVerse is a copy of other projects. To avoid speculation, I am now making the source code publicly available on the software folders of this repository.
-
-Both LoadROM and MultiROM tools, as well as the menu firmware were developed from scratch, with support to a wide number of mappers and features not found in other similar projects. The hardware designs, implementation strategy, documentation, and PC-side tooling are all original work by the author. The wiring was thought to ensure the best compatibility with the MSX bus and to allow easy assembly using widely available RP2040 and RP2350 boards. 
-
-PicoVerse is designed as an open-source, independent, well-documented MSX cartridge platform. Compatibility with other projects is neither a goal nor guaranteed (I tested some without much success); running third‑party software on PicoVerse hardware, or PicoVerse firmware on other boards, is at your own risk. The source and design files are openly available so you can learn, experiment, and build on them for the MSX community, subject to the project license.
+PicoVerse is designed as an open-source, independent, and documented MSX cartridge platform. Compatibility with other projects is neither a goal nor guaranteed (I tested some without much success); running third‑party software on PicoVerse hardware, or PicoVerse firmware on other boards, is at your own risk. The source and manufacturing files are openly available so you can learn, experiment, and build on them for the MSX community, subject to the project license.
 
 ## Project Highlights
 - Multi-ROM loader with an on-screen menu and mapper auto-detection.
 - Single-ROM LoadROM workflow for instant booting of one title without entering the menu.
+- Explorer firmware (RP2350) merges flash and microSD ROMs, labels the source (FL/SD), and supports on-device search. 
 - Ready-made Nextor builds with USB (RP2040) or microSD (RP2350) storage bridges.
 - PC-side tooling that generates UF2 images locally for quick drag-and-drop flashing.
-- Open hardware schematics, BOMs, and production-ready Gerbers.
+- BOMs, and production-ready Gerbers.
 - Active development roadmap covering RP2040 and RP2350-based cartridges.
 
 ## Documentation
 
 **MultiROM Guides**
-- [PicoVerse 2040 MultiROM Guide, English version](/docs/msx-picoverse-2040-multirom-tool-manual.en-US.md)
-- [Guia MultiROM do PicoVerse 2040, versão em português](/docs/msx-picoverse-2040-multirom-tool-manual.pt-BR.md)
-- [PicoVerse 2040 マルチROMガイド（日本語版）](/docs/msx-picoverse-2040-multirom-tool-manual.ja-JP.md)
-- [Guía MultiROM PicoVerse 2040, versión en español](/docs/msx-picoverse-2040-multirom-tool-manual.es-ES.md)
+- [PicoVerse 2040 MultiROM Guide Manual (English)](/docs/msx-picoverse-2040-multirom-tool-manual.en-US.md)
+- [PicoVerse 2350 MultiROM Tool Manual (English)](/docs/msx-picoverse-2350-multirom-tool-manual.en-us.md)
 
 **LoadROM Guides**
 - [MSX PicoVerse 2040 LoadROM Tool Manual (English)](/docs/msx-picoverse-2040-loadrom-tool-manual.en-us.md)
-- [Manual de la Herramienta LoadROM (es-ES)](/docs/msx-picoverse-2040-loadrom-tool-manual.es-ES.md)
-- [LoadROM ツール マニュアル (ja-JP)](/docs/msx-picoverse-2040-loadrom-tool-manual.ja-JP.md)
-- [Manual da Ferramenta LoadROM (pt-BR)](/docs/msx-picoverse-2040-loadrom-tool-manual.pt-BR.md)
+- [MSX PicoVerse 2350 LoadROM Tool Manual (English)](/docs/msx-picoverse-2350-loadrom-tool-manual.en-us.md)
+
+**Explorer Guides** 
+- [MSX PicoVerse 2350 Explorer Tool Manual (English)](/docs/msx-picoverse-2350-explorer-tool-manual.en-us.md)
 
 **Reference Material**
 - [PicoVerse 2040 Features Overview](/docs/msx-picoverse-2040-features.md)
@@ -79,13 +75,13 @@ Interactive BOM available at [PicoVerse 2040 BOM](https://htmlpreview.github.io/
 - Targets RP2350 boards exposing all 48 GPIO pins (not compatible with standard Pico 2 boards).
 - Adds microSD storage, ESP8266 WiFi header, and I2S audio expansion alongside 16 MB flash space.
 - Extra RAM to support advanced emulation features in future firmware releases.
-- Ships with a Nextor-first menu so you can boot straight into SofaRun or other disk-based tools.
+- Explorer firmware can load ROMs from both flash and microSD, with source labels and search.
 - Shares the same ROM mapper support list as the 2040 build.
 
 #### Bill of Materials
 | Reference | Description | Quantity | Link |
 | --- | --- | --- | --- |
-| U1 | RP2350 Dev Board 48 GPIO pins exposed (modded for extra RAM) | 1 | |
+| To be updated! |
 
 ## Repository Contents
 - `hardware/` – Production-ready Gerbers, fabrication notes, and BOMs for each supported dev board.
@@ -94,17 +90,16 @@ Interactive BOM available at [PicoVerse 2040 BOM](https://htmlpreview.github.io/
 - `images/` – Board renders and build photos for quick identification.
 - `labels/` – Printable Patola style cartridge label designs for both hardware variants.
 
-For design source files, firmware code, and ongoing development discussions, see the private engineering repository.
-
 ## Quick Start
 1. **Pick your target board**: Select the hardware revision that matches the RP2040 or RP2350 carrier you own, then grab the corresponding Gerber/BOM pack.
 2. **Manufacture or assemble**: Send the Gerbers to your PCB house or build from an ordered kit. Follow the assembly notes included in each hardware bundle.
 3. **Generate the UF2 image**:
    - For multiple titles, place your `.rom` files beside the MultiROM tool for your cartridge family (`2040/software/multirom/multirom.exe` or `2350/software/multirom/multirom.exe`) and run `multirom.exe` to create `multirom.uf2`.
-   - For an instant boot into a single game, place the desired `.rom` next to `2040/software/loadrom/tool/loadrom.exe` and run `loadrom.exe <file> [-o custom.uf2]` to create a dedicated UF2 that skips the menu.
+   - For an instant boot into a single game, place the desired `.rom` next to the LoadROM tool for your cartridge family and run `loadrom.exe <file> [-o custom.uf2]` to create a dedicated UF2 that skips the menu.
+   - For a combined flash + microSD menu on RP2350, use the Explorer tool (`2350/software/explorer/tool/explorer.exe`) to create `explorer.uf2`.
 4. **Flash the firmware**:
    - Hold BOOTSEL while connecting the cartridge to your PC via USB-C.
-   - Copy the freshly generated `multirom.uf2` (or alternate UF2 you produced) to the RPI-RP2 drive that appears.
+   - Copy the freshly generated UF2 (`multirom.uf2`, `loadrom.uf2`, or `explorer.uf2`) to the RPI-RP2 drive that appears.
    - Eject the drive; the board reboots and stores the image in flash.
 5. **Enjoy on MSX**: Insert the cartridge, power on the computer, pick a ROM from the menu, or launch Nextor to access USB or microSD storage.
 
@@ -136,6 +131,10 @@ The LoadROM tool targets situations where you want the PicoVerse to behave like 
    5. Insert the cartridge into your MSX—on power-up the embedded game launches immediately.
 
 Consult the LoadROM manuals (English, Spanish, Japanese, and Brazilian Portuguese) linked above for screenshots, troubleshooting, and in-depth explanations of mapper forcing, UF2 structure, and limitations.
+
+## Explorer Firmware (RP2350)
+
+Explorer is a 2350-only firmware that merges ROMs stored in flash with additional ROMs on the microSD card. ROMs are labeled with source tags (FL/SD), the list supports paging, and you can search by name directly in the menu. Use the Explorer tool to build the UF2 and copy extra ROMs to the microSD card. See the Explorer manual for limits (flash vs SD capacity, 256 KB SD ROM limit, and supported formats).
 
 ## Compatibility & Requirements
 - Works with MSX, MSX2, MSX2+, and MSX TurboR systems. Mapper support covers the most common game and utility formats.
