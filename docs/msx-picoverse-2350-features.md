@@ -13,6 +13,7 @@ The MSX PicoVerse 2350 is a Raspberry Pi Pico 2350-based MSX-compatible cartridg
 - **Support for up to 512 ROMs (Explorer)**: Up to 128 ROMs stored in flash plus up to 384 ROMs from microSD.
 - **Paged ROM List**: The menu loads pages on demand to keep the ROM list responsive with large libraries.
 - **Search by Name (Explorer)**: Press `F`, type a query, and press Enter to jump to the first match.
+- **On-device 40/80 Column Toggle**: Press `C` to switch between compact 40-column and wide 80-column menu layouts (when supported by the MSX model).
 - **SYSTEM ROM Priority**: System ROM entries remain at the top of the list, separate from name sorting.
 - **microSD ROM Size Limit**: microSD ROM files are limited to 256 KB each.
 - **Easy ROM Management**: Users can easily add, remove, and organize ROMs using a simple tool on their PC.

@@ -1,5 +1,5 @@
 // MSX PICOVERSE PROJECT
-// (c) 2024 Cristiano Goncalves
+// (c) 2025 Cristiano Goncalves
 // The Retro Hacker
 //
 // menu.c - MSX ROM with the menu program for the MSX PICOVERSE 2350 project
@@ -17,13 +17,36 @@
 static int paging_enabled = 0;
 #define SEARCH_MAX_LEN 24
 #define SCREEN_WIDTH 40
+static int use_80_columns = 0;
+static unsigned char name_col_width = NAME_COL_WIDTH;
 
-static void trim_right_spaces(char *text);
-static int contains_ignore_case(const char *text, const char *query);
-static int find_first_match(const char *query);
+__at (BIOS_HWVER) unsigned char msx_version;
+__at (BIOS_LINL40) unsigned char text_columns;
+__at (BIOS_TXTCOL) unsigned char text_color;
+__at (BIOS_T32ATR) unsigned int text2_attr_base;
+__at (BIOS_T32COL) unsigned int text2_color_base;
+__at (BIOS_RG4SAV) unsigned char vdp_reg4;
+__at (BIOS_RG3SAV) unsigned char vdp_reg3;
+__at (BIOS_RG7SAV) unsigned char vdp_reg7;
+__at (BIOS_CSRX) unsigned char cursor_x;
+__at (BIOS_CSRY) unsigned char cursor_y;
+
+// --- Forward declarations (UI + Pico protocol) ---
 static int read_search_query(char *buffer, int max_len);
 static void clear_last_line(void);
 static void print_last_line_text(const char *text);
+static void send_query_to_pico(const char *query);
+static unsigned int read_match_index(void);
+static int supports_80_column_mode(void);
+static void set_text_mode(int enable_80);
+static void init_text_mode(void);
+static void apply_text2_attr(unsigned char col, unsigned char row, unsigned char width, int inverted);
+static unsigned int bios_calatr(void);
+static void print_delimiter_line(void);
+static void print_title_line(void);
+static void print_footer_line(void);
+
+// --- ROM record helpers ---
 
 // read_ulong - Read a 4-byte value from the memory area
 // This function will read a 4-byte value from the memory area pointed by ptr and return the value as an unsigned long
@@ -53,14 +76,114 @@ int isEndOfData(const unsigned char *memory) {
     return 1;
 }
 
+// --- Pico control protocol (menu <-> firmware) ---
+
+// read_total_count - Get total ROM count from Pico control registers.
 static unsigned int read_total_count() {
     return (unsigned int)(*((unsigned char *)CTRL_COUNT_L)) |
            ((unsigned int)(*((unsigned char *)CTRL_COUNT_H)) << 8);
 }
 
+static int supports_80_column_mode(void) {
+    return msx_version >= 1;
+}
+
+static void set_text_mode(int enable_80) {
+    if (enable_80) {
+        text_columns = 80;
+        use_80_columns = 1;
+        name_col_width = MAX_FILE_NAME_LENGTH;
+    } else {
+        text_columns = 40;
+        use_80_columns = 0;
+        name_col_width = NAME_COL_WIDTH;
+    }
+    __asm
+    ld     iy,(#BIOS_EXPTBL-1)
+    push   ix
+    ld     ix,#BIOS_INITXT
+    call   BIOS_CALSLT
+    pop    ix
+    __endasm;
+}
+
+static void init_text_mode(void) {
+    int enable_80 = (!MENU_FORCE_40_COLUMNS && supports_80_column_mode());
+    set_text_mode(enable_80);
+}
+
+static void apply_text2_attr(unsigned char col, unsigned char row, unsigned char width, int inverted) {
+    if (!use_80_columns) {
+        return;
+    }
+    unsigned char normal = text_color ? text_color : vdp_reg7;
+    unsigned char inv = (unsigned char)((normal << 4) | (normal >> 4));
+    unsigned char attr = inverted ? inv : normal;
+    unsigned int addr = 0;
+    unsigned char saved_x = cursor_x;
+    unsigned char saved_y = cursor_y;
+    cursor_x = col;
+    cursor_y = row;
+    addr = bios_calatr();
+    cursor_x = saved_x;
+    cursor_y = saved_y;
+
+    if (addr == 0 || addr == 0xFFFF) {
+        unsigned int base_color = text2_color_base;
+        if (base_color == 0 || base_color == 0xFFFF) {
+            base_color = ((unsigned int)vdp_reg3) << 6;
+        }
+        if (base_color == 0 || base_color == 0xFFFF) {
+            base_color = 0x2000;
+        }
+        addr = base_color + ((unsigned int)row * 80u) + col;
+    }
+    for (unsigned char i = 0; i < width; i++) {
+        Vpoke(addr + i, attr);
+    }
+}
+
+// bios_calatr - Return VRAM attribute/color table address for current cursor
+static unsigned int bios_calatr(void) __naked
+{
+    __asm
+    ld      iy,(#BIOS_EXPTBL-1)
+    push    ix
+    ld      ix,#BIOS_CALATR
+    call    BIOS_CALSLT
+    pop     ix
+    ret
+    __endasm;
+}
+
+// send_query_to_pico - Write the search query buffer into Pico memory.
+static void send_query_to_pico(const char *query) {
+    unsigned int i = 0;
+    unsigned int len = 0;
+    if (query) {
+        len = strlen(query);
+    }
+    if (len >= CTRL_QUERY_SIZE) {
+        len = CTRL_QUERY_SIZE - 1;
+    }
+    for (i = 0; i < CTRL_QUERY_SIZE; i++) {
+        unsigned char value = 0;
+        if (i < len) {
+            value = (unsigned char)query[i];
+        }
+        Poke(CTRL_QUERY_BASE + i, value);
+    }
+}
+
+// read_match_index - Read the Pico-calculated match index.
+static unsigned int read_match_index(void) {
+    return (unsigned int)(*((unsigned char *)CTRL_MATCH_L)) |
+           ((unsigned int)(*((unsigned char *)CTRL_MATCH_H)) << 8);
+}
+
+// load_page_records - Request a page from Pico and load it into the local records array.
 static void load_page_records(unsigned int page_index) {
     unsigned char *memory = (unsigned char *)MEMORY_START;
-    unsigned int startIndex = page_index * FILES_PER_PAGE;
     unsigned int i;
 
     Poke(CTRL_PAGE, (unsigned char)page_index);
@@ -71,34 +194,32 @@ static void load_page_records(unsigned int page_index) {
     }
 
     for (i = 0; i < FILES_PER_PAGE; i++) {
-        unsigned int recordIndex = startIndex + i;
+        unsigned int recordIndex = (page_index * FILES_PER_PAGE) + i;
         if (recordIndex >= totalFiles || isEndOfData(memory)) {
             break;
         }
-        MemCopy(records[recordIndex].Name, memory, MAX_FILE_NAME_LENGTH);
-        for (int j = strlen(records[recordIndex].Name); j < MAX_FILE_NAME_LENGTH; j++) {
-            records[recordIndex].Name[j] = ' ';
+        MemCopy(records[i].Name, memory, MAX_FILE_NAME_LENGTH);
+        for (int j = strlen(records[i].Name); j < MAX_FILE_NAME_LENGTH; j++) {
+            records[i].Name[j] = ' ';
         }
-        records[recordIndex].Name[MAX_FILE_NAME_LENGTH] = '\0';
-        records[recordIndex].Mapper = memory[MAX_FILE_NAME_LENGTH];
-        records[recordIndex].Size = read_ulong(&memory[MAX_FILE_NAME_LENGTH + 1]);
-        records[recordIndex].Offset = read_ulong(&memory[MAX_FILE_NAME_LENGTH + 5]);
+        records[i].Name[MAX_FILE_NAME_LENGTH] = '\0';
+        records[i].Mapper = memory[MAX_FILE_NAME_LENGTH];
+        records[i].Size = read_ulong(&memory[MAX_FILE_NAME_LENGTH + 1]);
+        records[i].Offset = read_ulong(&memory[MAX_FILE_NAME_LENGTH + 5]);
         memory += ROM_RECORD_SIZE;
     }
 
     for (; i < FILES_PER_PAGE; i++) {
-        unsigned int recordIndex = startIndex + i;
-        if (recordIndex >= MAX_ROM_RECORDS) {
-            break;
-        }
-        records[recordIndex].Name[0] = '\0';
-        records[recordIndex].Mapper = 0;
-        records[recordIndex].Size = 0;
-        records[recordIndex].Offset = 0;
+        records[i].Name[0] = '\0';
+        records[i].Mapper = 0;
+        records[i].Size = 0;
+        records[i].Offset = 0;
     }
 }
 
-// readROMData - Read the ROM records from the memory area
+// --- ROM list loading ---
+
+// readROMData - Read the ROM records from the memory area or Pico paging buffer.
 // This function will read the ROM records from the memory area pointed by memory and store them in the records array. The function will stop reading
 // when it reaches the end of the data or the maximum number of records is reached.
 // Parameters:
@@ -128,25 +249,27 @@ void readROMData(ROMRecord *records, unsigned int *recordCount, unsigned long *s
     count = 0;
     total = 0;
     while (count < MAX_ROM_RECORDS && !isEndOfData(memory)) {
-        // Copy Name
-        MemCopy(records[count].Name, memory, MAX_FILE_NAME_LENGTH);
-        // pad with spaces in case of short names
-        for (int i = strlen(records[count].Name); i < MAX_FILE_NAME_LENGTH; i++) {
-            records[count].Name[i] = ' ';
+        if (count < FILES_PER_PAGE) {
+            // Copy Name (page buffer only)
+            MemCopy(records[count].Name, memory, MAX_FILE_NAME_LENGTH);
+            for (int i = strlen(records[count].Name); i < MAX_FILE_NAME_LENGTH; i++) {
+                records[count].Name[i] = ' ';
+            }
+            records[count].Name[MAX_FILE_NAME_LENGTH] = '\0';
+            records[count].Mapper = memory[MAX_FILE_NAME_LENGTH];
+            records[count].Size = read_ulong(&memory[MAX_FILE_NAME_LENGTH + 1]);
+            records[count].Offset = read_ulong(&memory[MAX_FILE_NAME_LENGTH + 5]);
         }
-        // Ensure null termination
-        records[count].Name[MAX_FILE_NAME_LENGTH] = '\0'; // Ensure null termination
-        records[count].Mapper = memory[MAX_FILE_NAME_LENGTH]; // Read Mapper code
-        records[count].Size = read_ulong(&memory[MAX_FILE_NAME_LENGTH + 1]); // Read Size (4 bytes)
-        records[count].Offset = read_ulong(&memory[MAX_FILE_NAME_LENGTH + 5]); // Read Offset (4 bytes)
-        memory += ROM_RECORD_SIZE; // Move to the next record
-        total += records[count].Size;
+        total += read_ulong(&memory[MAX_FILE_NAME_LENGTH + 1]);
+        memory += ROM_RECORD_SIZE;
         count++;
     }
 
     *recordCount = count;
     *sizeTotal = total;
 }
+
+// --- BIOS wrappers and timing ---
 
 static int compare_names(const char *a, const char *b) {
     return strncmp(a, b, MAX_FILE_NAME_LENGTH);
@@ -163,12 +286,6 @@ static void sort_records(ROMRecord *list, unsigned char count) {
             }
         }
     }
-}
-
-
-void wait1s() {
-    unsigned int start = *(unsigned int*)JIFFY;
-    while ((unsigned int)(*(unsigned int*)JIFFY - start) < 60);
 }
 
 // putchar - Print a character on the screen
@@ -241,11 +358,12 @@ void invert_chars(unsigned char startChar, unsigned char endChar)
     unsigned int srcAddress, dstAddress;
     unsigned char patternByte;
     unsigned char i, c;
+    unsigned int base = ((unsigned int)vdp_reg4) << 11; // reg4 * 0x800
 
     for (c = startChar; c <= endChar; c++)
     {
         // Each character has 8 bytes in the pattern table.
-        srcAddress  = 0x0800 + ((unsigned int)c * 8);
+        srcAddress  = base + ((unsigned int)c * 8);
         // Calculate destination address (shift by +95 bytes)
         dstAddress = srcAddress + (96*8);
 
@@ -266,22 +384,23 @@ void invert_chars(unsigned char startChar, unsigned char endChar)
 //   str - The string to print
 void print_str_inverted(const char *str) 
 {
-    char buffer[NAME_COL_WIDTH + 1];
+    char buffer[MAX_FILE_NAME_LENGTH + 1];
+    unsigned char width = name_col_width;
     size_t len = strlen(str);
 
-    if (len > NAME_COL_WIDTH) {
-        len = NAME_COL_WIDTH; // keep on-screen width stable
+    if (len > width) {
+        len = width; // keep on-screen width stable
     }
 
     memcpy(buffer, str, len);
 
-    for (size_t i = len; i < NAME_COL_WIDTH; i++) {
+    for (size_t i = len; i < width; i++) {
         buffer[i] = ' ';
     }
 
-    buffer[NAME_COL_WIDTH] = '\0';
+    buffer[width] = '\0';
 
-    for (size_t i = 0; i < NAME_COL_WIDTH; i++) {
+    for (size_t i = 0; i < width; i++) {
         int modifiedChar = buffer[i] + 96; // Apply the offset to the character
         PrintChar((unsigned char)modifiedChar); // Print the modified character
     }
@@ -293,15 +412,16 @@ void print_str_inverted(const char *str)
 int print_str_inverted_sliding(const char *str, int startPos) 
 {
     size_t len = strlen(str);
+    unsigned char width = name_col_width;
 
     if (len == 0) {
-        for (size_t i = 0; i < NAME_COL_WIDTH; i++) {
+        for (size_t i = 0; i < width; i++) {
             PrintChar((unsigned char)(' ' + 96)); // Keep the highlighted row blank when no name is present
         }
         return 0;
     }
 
-    if (len <= NAME_COL_WIDTH) {
+    if (len <= width) {
         print_str_inverted(str);
         return 1;
     }
@@ -311,10 +431,10 @@ int print_str_inverted_sliding(const char *str, int startPos)
         base += (int)len;
     }
 
-    unsigned char window[NAME_COL_WIDTH];
+    unsigned char window[MAX_FILE_NAME_LENGTH];
     int hasVisible = 0;
 
-    for (size_t i = 0; i < NAME_COL_WIDTH; i++) {
+    for (size_t i = 0; i < width; i++) {
         unsigned char ch = (unsigned char)str[(base + (int)i) % (int)len];
         window[i] = ch;
         if (ch != ' ') {
@@ -326,7 +446,7 @@ int print_str_inverted_sliding(const char *str, int startPos)
         return 0;
     }
 
-    for (size_t i = 0; i < NAME_COL_WIDTH; i++) {
+    for (size_t i = 0; i < width; i++) {
         PrintChar((unsigned char)((int)window[i] + 96)); // Apply the offset to the character
     }
     return 1;
@@ -397,7 +517,7 @@ static int wait_for_key_with_scroll(const char *name, unsigned int row)
     unsigned int lastTick = *jiffyPtr;
     int startPos = 0;
     size_t len = strlen(name);
-    int shouldScroll = (len > 22);
+    int shouldScroll = (!use_80_columns && len > name_col_width);
     const unsigned int scrollDelay = 30U; // 0.5 seconds at 60 Hz
 
     while (1)
@@ -483,13 +603,15 @@ char* mapper_description(int number) {
     return descriptions[number - 1];
 }
 
+// --- Menu rendering ---
+
 // displayMenu - Display the menu on the screen
 // This function will display the menu on the screen. It will print the header, the files on the current page and the footer with the page number and options.
 void displayMenu() {
     Locate(0, 0);
-    printf("MSX PICOVERSE 2350    [EXPLORER %s]", EXPLORER_VERSION);
+    print_title_line();
     Locate(0, 1);
-    printf("--------------------------------------");
+    print_delimiter_line();
     if (paging_enabled && currentPage > 0) {
         load_page_records((unsigned int)(currentPage - 1));
     }
@@ -504,8 +626,12 @@ void displayMenu() {
     unsigned int line = 0;
     for (unsigned int idx = startIndex; idx < endIndex; idx++, line++) {
         Locate(0, 2 + line); // Position on the screen, starting at line 2
-        const char *source = (records[idx].Mapper & SOURCE_SD_FLAG) ? "SD" : "FL";
-        printf(" %-22.22s %04lu %-2s %-7s", records[idx].Name, records[idx].Size/1024, source, mapper_description(records[idx].Mapper));
+        const char *source = (records[line].Mapper & SOURCE_SD_FLAG) ? "SD" : "FL";
+        if (use_80_columns) {
+            printf(" %-62.62s %04lu %-2s %-7s", records[line].Name, records[line].Size/1024, source, mapper_description(records[line].Mapper));
+        } else {
+            printf(" %-22.22s %04lu %-2s %-7s", records[line].Name, records[line].Size/1024, source, mapper_description(records[line].Mapper));
+        }
     }
 
     for (; line < FILES_PER_PAGE; line++) {
@@ -514,35 +640,18 @@ void displayMenu() {
     }
     // footer
     Locate(0, 21);
-    printf("--------------------------------------");
+    print_delimiter_line();
     Locate(0, 22);
-    printf("Page: %02d/%02d                 [H - Help]",currentPage, totalPages); // Print the page number and the help and config options
+    print_footer_line();
     if (totalFiles > 0) {
         Locate(0, (currentIndex % FILES_PER_PAGE) + 2); // Position the cursor on the selected file
         printf(">"); // Print the cursor
-        print_str_inverted(records[currentIndex].Name); // Print the selected file name inverted
+        print_str_inverted(records[currentIndex % FILES_PER_PAGE].Name); // Print the selected file name inverted
 
     }
 }
 
-// configMenu - Display the configuration menu on the screen
-// This function will display the configuration menu on the screen. 
-void configMenu()
-{
-    Cls(); // Clear the screen
-    Locate(0,0);
-    printf("MSX PICOVERSE 2350    [EXPLORER %s]", EXPLORER_VERSION);
-    Locate(0, 1);
-    printf("--------------------------------------");
-    Locate(0, 2);
-    Locate(0, 21);
-    printf("--------------------------------------");
-    Locate(0, 22);
-    printf("Press any key to return to the menu!");
-    InputChar();
-    displayMenu();
-    navigateMenu();
-}
+// --- Menu screens ---
 
 // helpMenu - Display the help menu on the screen
 // This function will display the help menu on the screen. It will print the help information and the keys to navigate the menu.
@@ -551,9 +660,9 @@ void helpMenu()
     
     Cls(); // Clear the screen
     Locate(0,0);
-    printf("MSX PICOVERSE 2350    [EXPLORER %s]", EXPLORER_VERSION);
+    print_title_line();
     Locate(0, 1);
-    printf("--------------------------------------");
+    print_delimiter_line();
     Locate(0, 2);
     printf("Use [UP]  [DOWN] to navigate the menu");
     Locate(0, 3);
@@ -568,8 +677,10 @@ void helpMenu()
     printf("Type, then [ENTER] to jump to match");
     Locate(0, 8);
     printf("Press [H] to display the help screen");
+    Locate(0, 9);
+    printf("Press [C] to toggle columns");
     Locate(0, 21);
-    printf("--------------------------------------");
+    print_delimiter_line();
     Locate(0, 22);
     printf("Press any key to return to the menu!");
     InputChar();
@@ -581,13 +692,37 @@ void helpMenu()
 // This function will load the game from the flash memory based on the index. 
 void loadGame(int index) 
 {
-    if ((records[index].Mapper & ~SOURCE_SD_FLAG) != 0)
+    ROMRecord *record = &records[index % FILES_PER_PAGE];
+    if ((record->Mapper & ~SOURCE_SD_FLAG) != 0)
     {
-        Poke(ROM_SELECT_REGISTER, index); // Set the game index
+        Poke(ROM_SELECT_REGISTER, index); // Set the game index (absolute)
         execute_rst00(); // Execute RST 00h to reset the MSX computer and load the game
         execute_rst00();
     }
 }
+
+static void toggle_column_mode(void) {
+    int target_80 = !use_80_columns;
+    if (target_80) {
+        if (MENU_FORCE_40_COLUMNS) {
+            print_last_line_text("80-column mode disabled. Press key.");
+            (void)bios_chget();
+            clear_last_line();
+            return;
+        }
+        if (!supports_80_column_mode()) {
+            print_last_line_text("MSX lacks 80-column mode. Press key.");
+            (void)bios_chget();
+            clear_last_line();
+            return;
+        }
+    }
+    set_text_mode(target_80);
+    invert_chars(32, 126);
+    displayMenu();
+}
+
+// --- Input/navigation ---
 
 // navigateMenu - Navigate the menu
 // This function will navigate the menu. It will wait for the user to press a key and then act based on the key pressed. The user can navigate the menu using the arrow keys
@@ -610,7 +745,7 @@ void navigateMenu()
         //printf("CPage: %2d Index: %2d", currentPage, currentIndex);
         unsigned int currentRow = (currentIndex%FILES_PER_PAGE) + 2;
 
-        key = wait_for_key_with_scroll(records[currentIndex].Name, currentRow);
+        key = wait_for_key_with_scroll(records[currentIndex % FILES_PER_PAGE].Name, currentRow);
         //key = KeyboardRead();
         //key = InputChar();
         char fkey = Fkeys();
@@ -618,7 +753,11 @@ void navigateMenu()
 
         Locate(0, currentRow); // Position the cursor on the previously selected file
         printf(" "); // Clear the cursor
-        printf("%-22.22s", records[currentIndex].Name); // Print only the first name column width characters
+        if (use_80_columns) {
+            printf("%-60.60s", records[currentIndex % FILES_PER_PAGE].Name);
+        } else {
+            printf("%-22.22s", records[currentIndex % FILES_PER_PAGE].Name); // Print only the first name column width characters
+        }
         switch (key) 
         {
             case 30: // Up arrow
@@ -665,25 +804,29 @@ void navigateMenu()
                 // Help
                 helpMenu(); // Display the help menu
                 break;
-            case 99: // C - Config (uppercase C)
-            case 67: // c - Config (lowercase c)
-                // Config
-                configMenu(); // Display the config menu
+            case 99: // C 
+            case 67: // c 
+                toggle_column_mode();
                 break;
             case 70: // F - Search (uppercase F)
             case 102: // f - Search (lowercase f)
                 if (read_search_query(search_query, SEARCH_MAX_LEN)) {
-                    if (search_query[0] != '\0') {
-                        int found = find_first_match(search_query);
-                        if (found >= 0) {
-                            currentIndex = found;
-                            currentPage = (currentIndex / FILES_PER_PAGE) + 1;
-                            clear_last_line();
-                        } else {
-                            print_last_line_text("Not found. Press any key.");
-                            (void)bios_chget();
-                            clear_last_line();
+                    send_query_to_pico(search_query);
+                    Poke(CTRL_CMD, CMD_FIND_FIRST);
+                    for (unsigned int wait = 0; wait < 1000; wait++) {
+                        if (Peek(CTRL_CMD) == 0) {
+                            break;
                         }
+                    }
+                    unsigned int match = read_match_index();
+                    if (match == 0xFFFFu || match >= totalFiles) {
+                        print_last_line_text("Not found. Press any key.");
+                        (void)bios_chget();
+                        clear_last_line();
+                    } else {
+                        currentIndex = (int)match;
+                        currentPage = (currentIndex / FILES_PER_PAGE) + 1;
+                        clear_last_line();
                     }
                 }
                 displayMenu();
@@ -696,7 +839,7 @@ void navigateMenu()
         }
         Locate(0, (currentIndex%FILES_PER_PAGE) + 2); // Position the cursor on the selected file
         printf(">"); // Print the cursor
-        print_str_inverted(records[currentIndex].Name); // Print the selected file name
+        print_str_inverted(records[currentIndex % FILES_PER_PAGE].Name); // Print the selected file name
         Locate(0, (currentIndex%FILES_PER_PAGE) + 2); // Position the cursor on the selected file
     }
 }
@@ -708,10 +851,11 @@ void main() {
     
     readROMData(records, &totalFiles, &totalSize);
     totalPages = (int)((totalFiles + FILES_PER_PAGE - 1) / FILES_PER_PAGE);
+
     if (totalPages == 0) {
         totalPages = 1;
     }
-    Screen(0); // Set the screen mode once
+    init_text_mode();
     invert_chars(32, 126); // Invert the characters from 32 to 126
     clear_fkeys(); // Clear the function keys
     //KillKeyBuffer(); // Clear the key buffer
@@ -722,78 +866,6 @@ void main() {
     navigateMenu();
 }
 
-static void trim_right_spaces(char *text) {
-    int len = strlen(text);
-    while (len > 0 && text[len - 1] == ' ') {
-        text[len - 1] = '\0';
-        len--;
-    }
-}
-
-static int contains_ignore_case(const char *text, const char *query) {
-    if (!query || !query[0]) {
-        return 1;
-    }
-    size_t text_len = strlen(text);
-    size_t query_len = strlen(query);
-    if (query_len > text_len) {
-        return 0;
-    }
-    for (size_t i = 0; i + query_len <= text_len; i++) {
-        size_t j = 0;
-        while (j < query_len) {
-            char a = text[i + j];
-            char b = query[j];
-            if (a >= 'a' && a <= 'z') a -= 32;
-            if (b >= 'a' && b <= 'z') b -= 32;
-            if (a != b) {
-                break;
-            }
-            j++;
-        }
-        if (j == query_len) {
-            return 1;
-        }
-    }
-    return 0;
-}
-
-static int find_first_match(const char *query) {
-    char name_buf[MAX_FILE_NAME_LENGTH + 1];
-    if (paging_enabled) {
-        unsigned int page_count = (totalFiles + FILES_PER_PAGE - 1) / FILES_PER_PAGE;
-        if (page_count == 0) {
-            return -1;
-        }
-        for (unsigned int page = 0; page < page_count; page++) {
-            load_page_records(page);
-            unsigned int start = page * FILES_PER_PAGE;
-            unsigned int end = start + FILES_PER_PAGE;
-            if (end > totalFiles) {
-                end = totalFiles;
-            }
-            for (unsigned int i = start; i < end; i++) {
-                MemCopy(name_buf, records[i].Name, MAX_FILE_NAME_LENGTH);
-                name_buf[MAX_FILE_NAME_LENGTH] = '\0';
-                trim_right_spaces(name_buf);
-                if (contains_ignore_case(name_buf, query)) {
-                    return (int)i;
-                }
-            }
-        }
-        return -1;
-    }
-
-    for (unsigned int i = 0; i < totalFiles; i++) {
-        MemCopy(name_buf, records[i].Name, MAX_FILE_NAME_LENGTH);
-        name_buf[MAX_FILE_NAME_LENGTH] = '\0';
-        trim_right_spaces(name_buf);
-        if (contains_ignore_case(name_buf, query)) {
-            return (int)i;
-        }
-    }
-    return -1;
-}
 
 static int read_search_query(char *buffer, int max_len) {
     int len = 0;
@@ -848,5 +920,28 @@ static void print_last_line_text(const char *text) {
     while (*text && col < (SCREEN_WIDTH - 1)) {
         PrintChar((unsigned char)*text++);
         col++;
+    }
+}
+
+static void print_delimiter_line(void) {
+    unsigned char width = use_80_columns ? 78 : 38;
+    for (unsigned char i = 0; i < width; i++) {
+        PrintChar('-');
+    }
+}
+
+static void print_title_line(void) {
+    if (use_80_columns) {
+        printf("MSX PICOVERSE 2350%44s[EXPLORER %s]", "", EXPLORER_VERSION);
+    } else {
+        printf("MSX PICOVERSE 2350%4s[EXPLORER %s]", "", EXPLORER_VERSION);
+    }
+}
+
+static void print_footer_line(void) {
+    if (use_80_columns) {
+        printf("Page: %02d/%02d%46s[F - Find] [H - Help]", currentPage, totalPages, "");
+    } else {
+        printf("Page: %02d/%02d%6s[F - Find] [H - Help]", currentPage, totalPages, "");
     }
 }

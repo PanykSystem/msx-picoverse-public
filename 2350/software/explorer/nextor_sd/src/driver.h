@@ -1,3 +1,12 @@
+// MSX PICOVERSE PROJECT
+// (c) 2025 Cristiano Goncalves
+// The Retro Hacker
+//
+// driver.h - Nextor SD driver definitions
+//
+// This work is licensed  under a "Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International
+// License". https://creativecommons.org/licenses/by-nc-sa/4.0/
+
 #ifndef __DRIVER_H
 #define __DRIVER_H
 

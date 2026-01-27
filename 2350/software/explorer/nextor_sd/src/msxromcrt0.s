@@ -1,3 +1,13 @@
+; MSX PICOVERSE PROJECT
+; (c) 2025 Cristiano Goncalves
+; The Retro Hacker
+;
+; msxromcrt0.s - Nextor SD driver CRT0 for PicoVerse 2350
+;
+; This work is licensed  under a "Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International
+; License". https://creativecommons.org/licenses/by-nc-sa/4.0/
+;
+; Original third-party notice preserved below.
 ;----------------------------------------------------------
 ; msxromcrt0.s - by S0urceror - 2022
 ; changed by The Retro Hacker for the PicoVerse 2350 project

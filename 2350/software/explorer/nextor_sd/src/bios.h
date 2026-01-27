@@ -1,3 +1,13 @@
+// MSX PICOVERSE PROJECT
+// (c) 2025 Cristiano Goncalves
+// The Retro Hacker
+//
+// bios.h - MSX BIOS symbols for Nextor SD
+//
+// This work is licensed  under a "Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International
+// License". https://creativecommons.org/licenses/by-nc-sa/4.0/
+//
+// Original third-party notice preserved below.
 //----------------------------------------------------------
 //		msxbios.h - by Danilo Angelo 2020
 //		Adapted from http ://www.konamiman.com/msx/msx2th/th-ap.txt

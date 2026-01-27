@@ -31,7 +31,7 @@
 
 #define UF2FILENAME             "explorer.uf2"  // UF2 produced by this tool
 #define MENU_COPY_SIZE          (16 * 1024)     // Portion of menu ROM copied verbatim before config payload
-#define MAX_FILE_NAME_LENGTH    50              // Maximum length of a ROM name
+#define MAX_FILE_NAME_LENGTH    60              // Maximum length of a ROM name
 #define TARGET_FILE_SIZE        32768           // Size of the combined MSX MENU ROM and the configuration file
 #define FLASH_START             0x10000000      // Start of the flash memory on the Raspberry Pi Pico
 #define MAX_ROM_FILES           128             // Maximum number of ROM files
@@ -455,7 +455,7 @@ int main(int argc, char *argv[])
         uint32_t nextor_offset = base_offset;
         memcpy(config_buffer + config_offset, &nextor_offset, sizeof(nextor_offset));
         config_offset += sizeof(nextor_offset);
-        printf("File %02d: Name = %-50s, Size = %07u bytes, Flash Offset = 0x%08X, Mapper = %s\n",
+        printf("File %02d: Name = %-60s, Size = %07u bytes, Flash Offset = 0x%08X, Mapper = %s\n",
                file_index, "Nextor SD (IO)", nextor_size, nextor_offset, mapper_description(10));
         total_rom_size += nextor_size;
         if (total_rom_size > MAX_TOTAL_ROM_SIZE) {
@@ -583,7 +583,7 @@ int main(int argc, char *argv[])
         config_offset += sizeof(fl_offset);
 
         // Print ROM information
-         printf("File %02d: Name = %-50s, Size = %07u bytes, Flash Offset = 0x%08X, Mapper = %s%s\n",
+         printf("File %02d: Name = %-60s, Size = %07u bytes, Flash Offset = 0x%08X, Mapper = %s%s\n",
              file_index, rom_name, rom_size, fl_offset, mapper_description(mapper_byte),
              mapper_forced ? " (forced)" : "");
 

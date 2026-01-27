@@ -2,7 +2,7 @@
 // (c) 2025 Cristiano Goncalves
 // The Retro Hacker
 //
-// explorer.c - This is the Raspberry Pico firmware that will be used to load ROMs into the MSX
+// explorer.c - PicoVerse 2350 Explorer firmware (ROM loader + SD support)
 //
 // This work is licensed  under a "Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International
 // License". https://creativecommons.org/licenses/by-nc-sa/4.0/
@@ -21,8 +21,8 @@
 #include "nextor.h"
 
 // config area and buffer for the ROM data
-#define ROM_NAME_MAX    50          // Maximum size of the ROM name
-#define MAX_ROM_RECORDS 512         // Maximum ROM files supported (flash + SD)
+#define ROM_NAME_MAX    60          // Maximum size of the ROM name
+#define MAX_ROM_RECORDS 1024        // Maximum ROM files supported (flash + SD)
 #define MAX_FLASH_RECORDS 128       // Maximum ROM files stored in flash
 #define ROM_RECORD_SIZE (ROM_NAME_MAX + 1 + (sizeof(uint32_t) * 2)) // Name + mapper + size + offset
 #define MONITOR_ADDR    (0xBB01)    // Monitor ROM address within image
@@ -34,7 +34,14 @@
 #define CTRL_COUNT_H    (CTRL_BASE_ADDR + 1)
 #define CTRL_PAGE       (CTRL_BASE_ADDR + 2)
 #define CTRL_STATUS     (CTRL_BASE_ADDR + 3)
+#define CTRL_CMD        (CTRL_BASE_ADDR + 4)
+#define CTRL_MATCH_L    (CTRL_BASE_ADDR + 5)
+#define CTRL_MATCH_H    (CTRL_BASE_ADDR + 6)
 #define CTRL_MAGIC      0xA5
+#define CTRL_QUERY_BASE 0xBFC0
+#define CTRL_QUERY_SIZE 32
+#define CMD_APPLY_FILTER 0x01
+#define CMD_FIND_FIRST   0x02
 
 // This symbol marks the end of the main program in flash.
 // Custom data starts right after it
@@ -69,6 +76,7 @@ typedef struct {
 ROMRecord records[MAX_ROM_RECORDS]; // Array to store the ROM records
 
 #define SD_PATH_MAX        96
+#define SD_PATH_BUFFER_SIZE 32768
 #define MIN_ROM_SIZE       8192
 #define MAX_ROM_SIZE       (15u * 1024u * 1024u)
 #define MAX_ANALYSIS_SIZE  20480
@@ -81,15 +89,21 @@ static const char *MAPPER_DESCRIPTIONS[] = {
 
 #define MAPPER_DESCRIPTION_COUNT (sizeof(MAPPER_DESCRIPTIONS) / sizeof(MAPPER_DESCRIPTIONS[0]))
 
-static char sd_paths[MAX_ROM_RECORDS][SD_PATH_MAX];
+static char sd_path_buffer[SD_PATH_BUFFER_SIZE];
+static uint16_t sd_path_offsets[MAX_ROM_RECORDS];
+static uint16_t sd_path_buffer_used = 0;
 static uint16_t sd_record_count = 0;
 static bool records_from_sd = false;
 static bool sd_mounted = false;
 static sd_card_t *sd_card = NULL;
 static uint8_t rom_analysis_buffer[MAX_ANALYSIS_SIZE];
 static uint16_t total_record_count = 0;
+static uint16_t full_record_count = 0;
 static uint8_t current_page = 0;
-static ROMRecord sort_buffer[MAX_ROM_RECORDS];
+static uint16_t filtered_indices[MAX_ROM_RECORDS];
+static char filter_query[CTRL_QUERY_SIZE];
+static uint8_t ctrl_cmd_state = 0;
+static uint16_t match_index = 0xFFFF;
 
 static void write_u32_le(uint8_t *ptr, uint32_t value);
 static void build_page_buffer(uint8_t page_index);
@@ -102,35 +116,101 @@ static bool is_system_record(const ROMRecord *record) {
     return ((record->Mapper & ~SOURCE_SD_FLAG) == MAPPER_SYSTEM);
 }
 
+static size_t trim_name_copy(char *dest, const char *src) {
+    size_t len = 0;
+    for (size_t i = 0; i < ROM_NAME_MAX; i++) {
+        dest[i] = src[i];
+    }
+    dest[ROM_NAME_MAX] = '\0';
+    len = ROM_NAME_MAX;
+    while (len > 0 && dest[len - 1] == ' ') {
+        dest[len - 1] = '\0';
+        len--;
+    }
+    return len;
+}
+
+static bool contains_ignore_case(const char *text, const char *query) {
+    if (!query || query[0] == '\0') {
+        return true;
+    }
+    size_t text_len = strlen(text);
+    size_t query_len = strlen(query);
+    if (query_len == 0 || query_len > text_len) {
+        return false;
+    }
+    for (size_t i = 0; i + query_len <= text_len; i++) {
+        size_t j = 0;
+        while (j < query_len) {
+            char a = text[i + j];
+            char b = query[j];
+            if (toupper((unsigned char)a) != toupper((unsigned char)b)) {
+                break;
+            }
+            j++;
+        }
+        if (j == query_len) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static void apply_filter(void) {
+    total_record_count = 0;
+    if (filter_query[0] == '\0') {
+        for (uint16_t i = 0; i < full_record_count; i++) {
+            filtered_indices[total_record_count++] = i;
+        }
+        return;
+    }
+
+    char name_buf[ROM_NAME_MAX + 1];
+    for (uint16_t i = 0; i < full_record_count; i++) {
+        trim_name_copy(name_buf, records[i].Name);
+        if (contains_ignore_case(name_buf, filter_query)) {
+            filtered_indices[total_record_count++] = i;
+        }
+    }
+}
+
+static void find_first_match(void) {
+    match_index = 0xFFFF;
+    if (filter_query[0] == '\0') {
+        return;
+    }
+
+    char name_buf[ROM_NAME_MAX + 1];
+    for (uint16_t i = 0; i < full_record_count; i++) {
+        trim_name_copy(name_buf, records[i].Name);
+        if (contains_ignore_case(name_buf, filter_query)) {
+            match_index = i;
+            return;
+        }
+    }
+}
+
 static void sort_records(ROMRecord *list, uint16_t count) {
     uint16_t system_count = 0;
-    uint16_t total_count = 0;
-
     for (uint16_t i = 0; i < count; i++) {
         if (is_system_record(&list[i])) {
-            sort_buffer[system_count++] = list[i];
+            if (i != system_count) {
+                ROMRecord temp = list[i];
+                memmove(&list[system_count + 1], &list[system_count], (i - system_count) * sizeof(ROMRecord));
+                list[system_count] = temp;
+            }
+            system_count++;
         }
     }
 
-    total_count = system_count;
-    for (uint16_t i = 0; i < count; i++) {
-        if (!is_system_record(&list[i])) {
-            sort_buffer[total_count++] = list[i];
-        }
-    }
-
-    for (uint16_t i = system_count; i + 1 < total_count; i++) {
-        for (uint16_t j = i + 1; j < total_count; j++) {
-            if (compare_record_names(&sort_buffer[i], &sort_buffer[j]) > 0) {
-                ROMRecord temp = sort_buffer[i];
-                sort_buffer[i] = sort_buffer[j];
-                sort_buffer[j] = temp;
+    for (uint16_t i = system_count; i + 1 < count; i++) {
+        for (uint16_t j = i + 1; j < count; j++) {
+            if (compare_record_names(&list[i], &list[j]) > 0) {
+                ROMRecord temp = list[i];
+                list[i] = list[j];
+                list[j] = temp;
             }
         }
-    }
-
-    for (uint16_t i = 0; i < total_count; i++) {
-        list[i] = sort_buffer[i];
     }
 }
 
@@ -160,12 +240,14 @@ static void build_page_buffer(uint8_t page_index) {
     uint16_t start_index = (uint16_t)page_index * FILES_PER_PAGE;
 
     for (uint16_t i = 0; i < FILES_PER_PAGE; i++) {
-        uint16_t record_index = (uint16_t)(start_index + i);
+        uint16_t filtered_index = (uint16_t)(start_index + i);
         uint8_t *entry = config_area + (i * ROM_RECORD_SIZE);
-        if (record_index >= total_record_count) {
+        if (filtered_index >= total_record_count) {
             memset(entry, 0xFF, ROM_RECORD_SIZE);
             continue;
         }
+
+        uint16_t record_index = filtered_indices[filtered_index];
 
         memset(entry, 0xFF, ROM_RECORD_SIZE);
         memset(entry, ' ', ROM_NAME_MAX);
@@ -452,8 +534,13 @@ static uint16_t populate_records_from_sd(uint8_t *config_area, uint16_t start_in
             continue;
         }
 
-        strncpy(sd_paths[record_index], path, sizeof(sd_paths[record_index]));
-        sd_paths[record_index][sizeof(sd_paths[record_index]) - 1] = '\0';
+        size_t path_len = strlen(path);
+        if (sd_path_buffer_used + path_len + 1 > SD_PATH_BUFFER_SIZE) {
+            break;
+        }
+        sd_path_offsets[record_index] = sd_path_buffer_used;
+        memcpy(sd_path_buffer + sd_path_buffer_used, path, path_len + 1);
+        sd_path_buffer_used = (uint16_t)(sd_path_buffer_used + path_len + 1);
 
         char display_name[ROM_NAME_MAX + 1];
         build_display_name(fno.fname, display_name, sizeof(display_name));
@@ -499,12 +586,14 @@ static bool load_rom_from_sd(uint16_t record_index, uint32_t size) {
     if (record_index >= MAX_ROM_RECORDS || size > CACHE_SIZE) {
         return false;
     }
-    if (sd_paths[record_index][0] == '\0') {
+    if (sd_path_offsets[record_index] == 0xFFFF) {
         return false;
     }
 
+    const char *path = sd_path_buffer + sd_path_offsets[record_index];
+
     FIL fil;
-    FRESULT fr = f_open(&fil, sd_paths[record_index], FA_READ);
+    FRESULT fr = f_open(&fil, path, FA_READ);
     if (fr != FR_OK) {
         return false;
     }
@@ -610,15 +699,18 @@ int __no_inline_not_in_flash_func(loadrom_msx_menu)(uint32_t offset)
     }
 
     for (int i = 0; i < MAX_ROM_RECORDS; i++) {
-        sd_paths[i][0] = '\0';
+        sd_path_offsets[i] = 0xFFFF;
     }
+    sd_path_buffer_used = 0;
 
     uint16_t sd_added = populate_records_from_sd(NULL, (uint16_t)record_count);
     records_from_sd = (sd_added > 0);
 
     uint16_t total_count = (uint16_t)(record_count + sd_added);
     sort_records(records, total_count);
-    total_record_count = total_count;
+    full_record_count = total_count;
+    memset(filter_query, 0, sizeof(filter_query));
+    apply_filter();
     current_page = 0;
     build_page_buffer(current_page);
 
@@ -637,6 +729,39 @@ int __no_inline_not_in_flash_func(loadrom_msx_menu)(uint32_t offset)
         {
             bool wr = !(gpio_get(PIN_WR));       // Write cycle (active low, not used)
 
+            if (wr && addr >= CTRL_QUERY_BASE && addr < (CTRL_QUERY_BASE + CTRL_QUERY_SIZE))
+            {
+                    uint8_t value = (gpio_get_all() >> 16) & 0xFF;
+                    filter_query[addr - CTRL_QUERY_BASE] = (char)value;
+                    while (!(gpio_get(PIN_WR))) {
+                        tight_loop_contents();
+                    }
+                    gpio_set_dir_in_masked(0xFF << 16);
+            }
+
+            if (wr && addr == CTRL_CMD)
+            {
+                    uint8_t cmd = (gpio_get_all() >> 16) & 0xFF;
+                    ctrl_cmd_state = cmd;
+                    if (cmd == CMD_APPLY_FILTER)
+                    {
+                        filter_query[CTRL_QUERY_SIZE - 1] = '\0';
+                        apply_filter();
+                        current_page = 0;
+                        build_page_buffer(current_page);
+                    }
+                    else if (cmd == CMD_FIND_FIRST)
+                    {
+                        filter_query[CTRL_QUERY_SIZE - 1] = '\0';
+                        find_first_match();
+                    }
+                    ctrl_cmd_state = 0;
+                    while (!(gpio_get(PIN_WR))) {
+                        tight_loop_contents();
+                    }
+                    gpio_set_dir_in_masked(0xFF << 16);
+            }
+
             if (wr && addr == CTRL_PAGE)
             {
                     uint8_t page = (gpio_get_all() >> 16) & 0xFF;
@@ -653,7 +778,12 @@ int __no_inline_not_in_flash_func(loadrom_msx_menu)(uint32_t offset)
 
             if (wr && addr == MONITOR_ADDR) // Monitor ROM address to select the ROM
             {   
-                    rom_index = (gpio_get_all() >> 16) & 0xFF;
+                    uint8_t selected_index = (gpio_get_all() >> 16) & 0xFF;
+                    if (selected_index < total_record_count) {
+                        rom_index = (uint8_t)filtered_indices[selected_index];
+                    } else {
+                        rom_index = 0;
+                    }
                     while (!(gpio_get(PIN_WR))) { // Wait until the write cycle completes (WR goes high){
                         tight_loop_contents();
                     }
@@ -681,6 +811,15 @@ int __no_inline_not_in_flash_func(loadrom_msx_menu)(uint32_t offset)
                                 break;
                             case CTRL_STATUS:
                                 ctrl_value = CTRL_MAGIC;
+                                break;
+                            case CTRL_CMD:
+                                ctrl_value = ctrl_cmd_state;
+                                break;
+                            case CTRL_MATCH_L:
+                                ctrl_value = (uint8_t)(match_index & 0xFFu);
+                                break;
+                            case CTRL_MATCH_H:
+                                ctrl_value = (uint8_t)((match_index >> 8) & 0xFFu);
                                 break;
                         }
                         gpio_set_dir_out_masked(0xFF << 16); // Set data bus to output mode
@@ -1464,7 +1603,7 @@ int __no_inline_not_in_flash_func(main)()
 
     bool is_sd_rom = (selected->Mapper & SOURCE_SD_FLAG) != 0;
     if (is_sd_rom) {
-        if (!load_rom_from_sd((uint8_t)selected->Offset, (uint32_t)selected->Size)) {
+        if (!load_rom_from_sd((uint16_t)selected->Offset, (uint32_t)selected->Size)) {
             printf("Debug: Failed to load ROM from SD card\n");
             while (true) { tight_loop_contents(); }
         }

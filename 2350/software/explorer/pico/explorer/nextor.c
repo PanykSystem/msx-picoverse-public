@@ -2,7 +2,7 @@
 // (c) 2025 Cristiano Goncalves
 // The Retro Hacker
 //
-// nextor.c - This is the Raspberry Pico firmware that will be used as a bridge between MSX NEXTOR and Mass Storage Devices (SD Card and USB).
+// nextor.c - PicoVerse 2350 Nextor SD bridge (MSX <-> storage)
 //
 // MSX NEXTOR bridge: the Pico speaks a simple control/data protocol while proxying SDCard/USB MSC.
 // Control port writes choose an action, data port transfers payloads, and appropriate libraries perform

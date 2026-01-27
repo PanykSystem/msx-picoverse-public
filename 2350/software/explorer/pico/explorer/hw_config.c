@@ -1,3 +1,13 @@
+// MSX PICOVERSE PROJECT
+// (c) 2025 Cristiano Goncalves
+// The Retro Hacker
+//
+// hw_config.c - SD card hardware configuration for PicoVerse Explorer
+//
+// This work is licensed  under a "Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International
+// License". https://creativecommons.org/licenses/by-nc-sa/4.0/
+//
+// Original third-party notice preserved below.
 
 /* hw_config.c
 Copyright 2021 Carl John Kugler III

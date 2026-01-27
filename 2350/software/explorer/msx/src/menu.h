@@ -1,23 +1,40 @@
+// MSX PICOVERSE PROJECT
+// (c) 2025 Cristiano Goncalves
+// The Retro Hacker
+//
+// menu.h - MSX Explorer menu definitions for PicoVerse 2350
+// 
+// This work is licensed  under a "Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International
+// License". https://creativecommons.org/licenses/by-nc-sa/4.0/
+
 #include <msx_fusion.h>
 #include <stdio.h>
 #include "bios.h"
 
 // Define maximum files per page and screen properties
 #define FILES_PER_PAGE 19   // Maximum files per page on the menu
-#define MAX_FILE_NAME_LENGTH 50     // Maximum size of the ROM name
+#define MAX_FILE_NAME_LENGTH 60     // Maximum size of the ROM name
 #define ROM_RECORD_SIZE (MAX_FILE_NAME_LENGTH + 1 + sizeof(unsigned long) + sizeof(unsigned long))  // Size of the ROM record in bytes
-#define MAX_ROM_RECORDS 512 // Maximum ROM files supported
+#define MAX_ROM_RECORDS 65535 // Maximum ROM files supported (counter limit)
 #define MEMORY_START 0x8000 // Start of the memory area to read the ROM records
 #define ROM_SELECT_REGISTER 0xBB01 // Memory-mapped register that selects the ROM to load
 #define JIFFY 0xFC9E
 #define SOURCE_SD_FLAG 0x80
 #define NAME_COL_WIDTH 22
+#define MENU_FORCE_40_COLUMNS 0
 #define CTRL_BASE_ADDR 0xBFF0
 #define CTRL_COUNT_L (CTRL_BASE_ADDR + 0)
 #define CTRL_COUNT_H (CTRL_BASE_ADDR + 1)
 #define CTRL_PAGE    (CTRL_BASE_ADDR + 2)
 #define CTRL_STATUS  (CTRL_BASE_ADDR + 3)
+#define CTRL_CMD     (CTRL_BASE_ADDR + 4)
+#define CTRL_MATCH_L (CTRL_BASE_ADDR + 5)
+#define CTRL_MATCH_H (CTRL_BASE_ADDR + 6)
 #define CTRL_MAGIC   0xA5
+#define CTRL_QUERY_BASE 0xBFC0
+#define CTRL_QUERY_SIZE 32
+#define CMD_APPLY_FILTER 0x01
+#define CMD_FIND_FIRST  0x02
 
 // Structure to represent a ROM record
 // The ROM record will contain the name of the ROM, the mapper code, the size of the ROM and the offset in the flash memory
@@ -39,7 +56,7 @@ int totalPages;     // Total pages
 int currentIndex;   // Current file index
 unsigned int totalFiles;     // Total files
 unsigned long totalSize;
-ROMRecord records[MAX_ROM_RECORDS]; // Array to store the ROM records
+ROMRecord records[FILES_PER_PAGE]; // Page buffer for ROM records
 
 // Declare the functions
 unsigned long read_ulong(const unsigned char *ptr);

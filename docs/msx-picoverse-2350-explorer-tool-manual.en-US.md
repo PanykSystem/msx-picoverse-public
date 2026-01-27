@@ -1,5 +1,9 @@
 # MSX PicoVerse 2350 Explorer Tool Manual (EN-US)
 
+|Explorer Menu 40 Columns|Explorer Menu 80 Columns|
+|---|---|
+|![](/images/Explorer_40.png)|![](/images/Explorer_80.png)|
+
 The Explorer tool creates a UF2 image that flashes the PicoVerse 2350 cartridge with the Explorer firmware. The UF2 bundles:
 - PicoVerse 2350 Explorer firmware.
 - The MSX Explorer menu ROM.
@@ -18,9 +22,10 @@ Use the Explorer tool when you want a menu that loads ROMs from both flash and m
 ## Limits
 
 - Flash ROM entries created by the tool: up to 128 files.
+- Combined Explorer menu limit: 1024 entries (up to 128 from flash + up to 896 from microSD).
 - Total flash ROM payload size: ~14 MB combined.
 - Supported ROM size range: 8 KB to 15 MB.
-- ROM names in the menu are limited to 50 characters (longer names are truncated).
+- ROM names in the menu are limited to 60 characters (longer names are truncated).
 
 ## Basic workflow
 
@@ -29,6 +34,11 @@ Use the Explorer tool when you want a menu that loads ROMs from both flash and m
 3. Put the PicoVerse 2350 into BOOTSEL mode and copy the UF2 to the `RPI-RP2` drive.
 4. (Optional) Copy more `.ROM` files to a microSD card for SD loading.
 5. Insert the cartridge into your MSX and power on.
+
+### Explorer menu capabilities
+
+- Search by ROM name directly on the MSX by pressing `F`, typing part of the name, and pressing Enter to jump to the first match.
+- Automatic detection of MSX models that support 80-column text mode. Compatible machines boot the menu in 80 columns; others fall back to 40 columns, and you can press `C` at any time to toggle between layouts.
 
 ## Command-line usage
 
@@ -85,7 +95,7 @@ Explorer can load ROMs from a microSD card in addition to flash. ROMs on SD are 
 
 ### microSD limitations
 
-- The combined list is capped at 512 entries total (up to 128 from flash + up to 384 from microSD).
+- The combined list is capped at 1024 entries total (up to 128 from flash + up to 896 from microSD).
 - Only `.ROM` files in the card root are scanned (no subfolders).
 - microSD ROM files are limited to 256 KB each.
 - Unsupported or invalid ROMs are skipped (same mapper and size rules as flash).
@@ -96,7 +106,8 @@ Explorer can load ROMs from a microSD card in addition to flash. ROMs on SD are 
 - Left/Right: change pages.
 - Enter/Space: load selected ROM.
 - H: show help screen.
-- F: search the ROM list, then press Enter to jump to the first match.
+- F: search ROM names, then press Enter to jump to the first match.
+- C: toggle between 40-column and 80-column layouts when your MSX supports it (auto-detects 80-column capable machines and defaults to 80 columns unless forced otherwise).
 
 ## Known limitations
 
@@ -105,4 +116,4 @@ Explorer can load ROMs from a microSD card in addition to flash. ROMs on SD are 
 - ROMs with unknown or unsupported mappers are skipped unless you force a mapper tag.
 
 Author: Cristiano Almeida Goncalves
-Last updated: 01/25/2026
+Last updated: 01/26/2026

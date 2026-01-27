@@ -2,7 +2,7 @@
 // (c) 2025 Cristiano Goncalves
 // The Retro Hacker
 //
-// explorer.h - This is the Raspberry Pico firmware that will be used to load ROMs into the MSX
+// explorer.h - PicoVerse 2350 Explorer firmware definitions
 //
 // This work is licensed  under a "Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International
 // License". https://creativecommons.org/licenses/by-nc-sa/4.0/

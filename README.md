@@ -134,7 +134,15 @@ Consult the LoadROM manuals (English, Spanish, Japanese, and Brazilian Portugues
 
 ## Explorer Firmware (RP2350)
 
+|Explorer Menu 40 Columns|Explorer Menu 80 Columns|
+|---|---|
+|![](/images/Explorer_40.png)|![](/images/Explorer_80.png)|
+
 Explorer is a 2350-only firmware that merges ROMs stored in flash with additional ROMs on the microSD card. ROMs are labeled with source tags (FL/SD), the list supports paging, and you can search by name directly in the menu. Use the Explorer tool to build the UF2 and copy extra ROMs to the microSD card. See the Explorer manual for limits (flash vs SD capacity, 256 KB SD ROM limit, and supported formats).
+
+You can have up to 1024 ROMs combining flash and microSD entries (128 from flash, up to 896 from SD). The menu auto-detects whether the MSX supports 80-column text mode and boots accordingly; you can also press `C` at any time to toggle between 40- and 80-column layouts.
+
+A search function is available by pressing `F` in the menu. Type part of a ROM name and press Enter to jump to the first matching entry. Press `H` to view the help screen.
 
 ## Compatibility & Requirements
 - Works with MSX, MSX2, MSX2+, and MSX TurboR systems. Mapper support covers the most common game and utility formats.

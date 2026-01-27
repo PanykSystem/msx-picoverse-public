@@ -1,3 +1,12 @@
+// MSX PICOVERSE PROJECT
+// (c) 2025 Cristiano Goncalves
+// The Retro Hacker
+//
+// driver.c - Nextor SD driver glue for PicoVerse 2350
+//
+// This work is licensed  under a "Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International
+// License". https://creativecommons.org/licenses/by-nc-sa/4.0/
+
 #include <stdio.h>
 #include <stdint.h>
 #include <string.h>
