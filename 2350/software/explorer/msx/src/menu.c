@@ -8,46 +8,40 @@
 // License". https://creativecommons.org/licenses/by-nc-sa/4.0/
 
 #include <string.h>
+#include <stdint.h>
 #include "menu.h"
+#include "menu_state.h"
+#include "menu_ui.h"
+#include "menu_input.h"
+#include "screen_mp3.h"
+#include "screen_rom.h"
 
-#ifndef EXPLORER_VERSION
-#define EXPLORER_VERSION "v1.00"
-#endif
-
-static int paging_enabled = 0;
 #define SEARCH_MAX_LEN 24
-#define SCREEN_WIDTH 40
-static int use_80_columns = 0;
-static unsigned char name_col_width = NAME_COL_WIDTH;
 
-__at (BIOS_HWVER) unsigned char msx_version;
-__at (BIOS_LINL40) unsigned char text_columns;
-__at (BIOS_TXTCOL) unsigned char text_color;
-__at (BIOS_T32ATR) unsigned int text2_attr_base;
-__at (BIOS_T32COL) unsigned int text2_color_base;
-__at (BIOS_RG4SAV) unsigned char vdp_reg4;
-__at (BIOS_RG3SAV) unsigned char vdp_reg3;
-__at (BIOS_RG7SAV) unsigned char vdp_reg7;
-__at (BIOS_CSRX) unsigned char cursor_x;
-__at (BIOS_CSRY) unsigned char cursor_y;
+// Control Variables (definitions)
+int currentPage;
+int totalPages;
+int currentIndex;
+unsigned int totalFiles;
+unsigned long totalSize;
+ROMRecord records[FILES_PER_PAGE];
 
 // --- Forward declarations (UI + Pico protocol) ---
 static int read_search_query(char *buffer, int max_len);
-static void clear_last_line(void);
-static void print_last_line_text(const char *text);
 static void send_query_to_pico(const char *query);
 static unsigned int read_match_index(void);
-static int supports_80_column_mode(void);
-static void set_text_mode(int enable_80);
-static void init_text_mode(void);
-static void apply_text2_attr(unsigned char col, unsigned char row, unsigned char width, int inverted);
 static unsigned int bios_calatr(void);
-static void print_delimiter_line(void);
-static void print_title_line(void);
-static void print_footer_line(void);
+int record_is_folder(const ROMRecord *record);
+int record_is_mp3(const ROMRecord *record);
+void trim_name_to_buffer(const char *src, char *dst, int max_len);
+static void build_menu_row_text(const ROMRecord *record, const char *name_override, char *out, unsigned char width);
+static int build_sliding_name_window(const char *str, int startPos, char *out, unsigned char width);
+static void enter_directory(const char *name);
+static void refresh_menu_state(void);
+void msx_wait(uint16_t times_jiffy);
+void delay_ms(uint16_t milliseconds);
 
 // --- ROM record helpers ---
-
 // read_ulong - Read a 4-byte value from the memory area
 // This function will read a 4-byte value from the memory area pointed by ptr and return the value as an unsigned long
 // Parameters:
@@ -76,71 +70,55 @@ int isEndOfData(const unsigned char *memory) {
     return 1;
 }
 
+static unsigned int read_u16_le(const unsigned char *ptr) {
+    return (unsigned int)ptr[0] | ((unsigned int)ptr[1] << 8);
+}
+
+static int buffer_has_magic(const unsigned char *memory) {
+    return memory[DATA_HDR_MAGIC] == (unsigned char)DATA_MAGIC_0 &&
+           memory[DATA_HDR_MAGIC + 1] == (unsigned char)DATA_MAGIC_1 &&
+           memory[DATA_HDR_MAGIC + 2] == (unsigned char)DATA_MAGIC_2 &&
+           memory[DATA_HDR_MAGIC + 3] == (unsigned char)DATA_MAGIC_3;
+}
+
+static void clear_record(ROMRecord *record) {
+    record->Name[0] = '\0';
+    record->Mapper = 0;
+    record->Size = 0;
+    record->Offset = 0;
+}
+
+static void read_string_from_pool(char *dst, const unsigned char *base,
+                                  unsigned int pool_offset, unsigned int pool_size,
+                                  unsigned int string_offset) {
+    dst[0] = '\0';
+    if (string_offset >= pool_size) {
+        return;
+    }
+    const unsigned char *src = base + pool_offset + string_offset;
+    unsigned int max_len = MAX_FILE_NAME_LENGTH;
+    unsigned int remaining = pool_size - string_offset;
+    if (remaining < max_len) {
+        max_len = remaining;
+    }
+    unsigned int i = 0;
+    while (i < max_len) {
+        unsigned char ch = src[i];
+        if (ch == '\0') {
+            break;
+        }
+        dst[i] = (char)ch;
+        i++;
+    }
+    dst[i] = '\0';
+}
+
 // --- Pico control protocol (menu <-> firmware) ---
 
 // read_total_count - Get total ROM count from Pico control registers.
 static unsigned int read_total_count() {
     return (unsigned int)(*((unsigned char *)CTRL_COUNT_L)) |
            ((unsigned int)(*((unsigned char *)CTRL_COUNT_H)) << 8);
-}
-
-static int supports_80_column_mode(void) {
-    return msx_version >= 1;
-}
-
-static void set_text_mode(int enable_80) {
-    if (enable_80) {
-        text_columns = 80;
-        use_80_columns = 1;
-        name_col_width = MAX_FILE_NAME_LENGTH;
-    } else {
-        text_columns = 40;
-        use_80_columns = 0;
-        name_col_width = NAME_COL_WIDTH;
-    }
-    __asm
-    ld     iy,(#BIOS_EXPTBL-1)
-    push   ix
-    ld     ix,#BIOS_INITXT
-    call   BIOS_CALSLT
-    pop    ix
-    __endasm;
-}
-
-static void init_text_mode(void) {
-    int enable_80 = (!MENU_FORCE_40_COLUMNS && supports_80_column_mode());
-    set_text_mode(enable_80);
-}
-
-static void apply_text2_attr(unsigned char col, unsigned char row, unsigned char width, int inverted) {
-    if (!use_80_columns) {
-        return;
-    }
-    unsigned char normal = text_color ? text_color : vdp_reg7;
-    unsigned char inv = (unsigned char)((normal << 4) | (normal >> 4));
-    unsigned char attr = inverted ? inv : normal;
-    unsigned int addr = 0;
-    unsigned char saved_x = cursor_x;
-    unsigned char saved_y = cursor_y;
-    cursor_x = col;
-    cursor_y = row;
-    addr = bios_calatr();
-    cursor_x = saved_x;
-    cursor_y = saved_y;
-
-    if (addr == 0 || addr == 0xFFFF) {
-        unsigned int base_color = text2_color_base;
-        if (base_color == 0 || base_color == 0xFFFF) {
-            base_color = ((unsigned int)vdp_reg3) << 6;
-        }
-        if (base_color == 0 || base_color == 0xFFFF) {
-            base_color = 0x2000;
-        }
-        addr = base_color + ((unsigned int)row * 80u) + col;
-    }
-    for (unsigned char i = 0; i < width; i++) {
-        Vpoke(addr + i, attr);
-    }
 }
 
 // bios_calatr - Return VRAM attribute/color table address for current cursor
@@ -154,6 +132,7 @@ static unsigned int bios_calatr(void) __naked
     pop     ix
     ret
     __endasm;
+
 }
 
 // send_query_to_pico - Write the search query buffer into Pico memory.
@@ -181,7 +160,295 @@ static unsigned int read_match_index(void) {
            ((unsigned int)(*((unsigned char *)CTRL_MATCH_H)) << 8);
 }
 
+// record_is_folder - Check if a ROM record represents a folder.
+int record_is_folder(const ROMRecord *record) {
+    return (record->Mapper & FOLDER_FLAG) != 0;
+}
+
+int record_is_mp3(const ROMRecord *record) {
+    return (record->Mapper & MP3_FLAG) != 0;
+}
+
+static void build_menu_row_text(const ROMRecord *record, const char *name_override, char *out, unsigned char width) {
+    const char *source = (record->Mapper & SOURCE_SD_FLAG) ? "SD" : "FL";
+    const char *type_label = " ROM";
+    char size_text[8] = "";
+    const char *name = name_override ? name_override : record->Name;
+    unsigned long size_kb = record->Size / 1024u;
+
+    if (record_is_folder(record)) {
+        type_label = "<DIR>";
+        source = "SD";
+    } else if (record_is_mp3(record)) {
+        type_label = " MP3";
+    }
+
+    if (!record_is_folder(record)) {
+        if (size_kb <= 1024u) {
+            sprintf(size_text, "%luKB", size_kb);
+        } else {
+            unsigned long size_mb = (size_kb + 1023u) / 1024u;
+            sprintf(size_text, "%luMB", size_mb);
+        }
+    }
+
+    if (use_80_columns) {
+        sprintf(out, " %-61.61s %6s %-2s %-5s", name, size_text, source, type_label);
+    } else {
+        sprintf(out, " %-21.21s %6s %-2s %-5s", name, size_text, source, type_label);
+    }
+
+    int len = (int)strlen(out);
+    for (int i = len; i < (int)width; i++) {
+        out[i] = ' ';
+    }
+    out[width] = '\0';
+}
+
+static int build_sliding_name_window(const char *str, int startPos, char *out, unsigned char width)
+{
+    size_t len = strlen(str);
+
+    if (width == 0) {
+        out[0] = '\0';
+        return 0;
+    }
+
+    if (len == 0) {
+        for (size_t i = 0; i < width; i++) {
+            out[i] = ' ';
+        }
+        out[width] = '\0';
+        return 0;
+    }
+
+    if (len <= width) {
+        memcpy(out, str, len);
+        for (size_t i = len; i < width; i++) {
+            out[i] = ' ';
+        }
+        out[width] = '\0';
+        return 1;
+    }
+
+    int base = startPos % (int)len;
+    if (base < 0) {
+        base += (int)len;
+    }
+
+    int hasVisible = 0;
+    for (size_t i = 0; i < width; i++) {
+        unsigned char ch = (unsigned char)str[(base + (int)i) % (int)len];
+        out[i] = (char)ch;
+        if (ch != ' ') {
+            hasVisible = 1;
+        }
+    }
+    out[width] = '\0';
+    return hasVisible;
+}
+
+// trim_name_to_buffer - Trim trailing spaces from a name and copy to buffer.
+void trim_name_to_buffer(const char *src, char *dst, int max_len) {
+    int len = 0;
+    while (len < max_len && src[len] != '\0') {
+        dst[len] = src[len];
+        len++;
+    }
+    while (len > 0 && dst[len - 1] == ' ') {
+        len--;
+    }
+    dst[len] = '\0';
+}
+
+// enter_directory - Send command to Pico to enter a directory.
+static void enter_directory(const char *name) {
+    char folder[CTRL_QUERY_SIZE];
+    if (name) {
+        trim_name_to_buffer(name, folder, CTRL_QUERY_SIZE - 1);
+    } else {
+        folder[0] = '\0';
+    }
+    if (folder[0] == '.' && folder[1] == '.' && folder[2] == '\0') {
+        folder[0] = '\0';
+    }
+    menu_ui_print_last_line_text("Loading...");
+    int blink_state = 1;
+    int blink_tick = 0;
+    for (unsigned int wait = 0; wait < 100; wait++) {
+        if (Peek(CTRL_CMD) == 0) {
+            break;
+        }
+        delay_ms(10);
+        if (++blink_tick >= 2) {
+            blink_tick = 0;
+            if (blink_state) {
+                menu_ui_clear_last_line();
+                blink_state = 0;
+            } else {
+                menu_ui_print_last_line_text("Loading...");
+                blink_state = 1;
+            }
+        }
+    }
+    send_query_to_pico(folder);
+    Poke(CTRL_CMD, CMD_ENTER_DIR);
+    for (unsigned int wait = 0; wait < 500; wait++) {
+        if (Peek(CTRL_CMD) == 0) {
+            break;
+        }
+        delay_ms(10);
+        if (++blink_tick >= 2) {
+            blink_tick = 0;
+            if (blink_state) {
+                menu_ui_clear_last_line();
+                blink_state = 0;
+            } else {
+                menu_ui_print_last_line_text("Loading...");
+                blink_state = 1;
+            }
+        }
+    }
+}
+
+// refresh_menu_state - Refresh the menu state by reading total files and pages from Pico.
+static void refresh_menu_state(void) {
+    unsigned int count = 0xFFFFu;
+    unsigned int last = 0xFFFFu;
+    unsigned int stable = 0;
+    int blink_state = 1;
+    int blink_tick = 0;
+    for (unsigned int wait = 0; wait < 100; wait++) {
+        count = read_total_count();
+        if (count != 0xFFFFu && count == last) {
+            stable++;
+            if (stable >= 2) {
+                break;
+            }
+        } else {
+            stable = 0;
+        }
+        last = count;
+        delay_ms(10);
+        if (++blink_tick >= 2) {
+            blink_tick = 0;
+            if (blink_state) {
+                menu_ui_clear_last_line();
+                blink_state = 0;
+            } else {
+                menu_ui_print_last_line_text("Loading...");
+                blink_state = 1;
+            }
+        }
+    }
+    readROMData(records, &totalFiles, &totalSize);
+    totalPages = (int)((totalFiles + FILES_PER_PAGE - 1) / FILES_PER_PAGE);
+    if (totalPages == 0) {
+        totalPages = 1;
+    }
+    currentPage = 1;
+    if (totalFiles == 0) {
+        currentIndex = 0;
+    } else if ((unsigned int)currentIndex >= totalFiles) {
+        currentIndex = (int)(totalFiles - 1);
+    }
+    menu_ui_clear_last_line();
+    displayMenu();
+}
+
 // load_page_records - Request a page from Pico and load it into the local records array.
+static int parse_page_buffer(unsigned int page_index) {
+    unsigned char *base = (unsigned char *)MEMORY_START;
+    if (!buffer_has_magic(base)) {
+        return 0;
+    }
+
+    unsigned int header_size = read_u16_le(base + DATA_HDR_SIZE);
+    if (header_size < DATA_HEADER_SIZE) {
+        return 0;
+    }
+
+    unsigned int page_count = read_u16_le(base + DATA_HDR_PAGE_COUNT);
+    unsigned int table_offset = read_u16_le(base + DATA_HDR_TABLE_OFFSET);
+    unsigned int table_size = read_u16_le(base + DATA_HDR_TABLE_SIZE);
+    unsigned int string_offset = read_u16_le(base + DATA_HDR_STRING_OFFSET);
+    unsigned int string_size = read_u16_le(base + DATA_HDR_STRING_SIZE);
+
+    if (table_offset + table_size > DATA_BUFFER_SIZE) {
+        return 0;
+    }
+    if (string_offset + string_size > DATA_BUFFER_SIZE) {
+        return 0;
+    }
+
+    if (page_count > FILES_PER_PAGE) {
+        page_count = FILES_PER_PAGE;
+    }
+
+    for (unsigned int i = 0; i < FILES_PER_PAGE; i++) {
+        clear_record(&records[i]);
+    }
+
+    for (unsigned int i = 0; i < page_count; i++) {
+        unsigned int entry_offset = table_offset + (i * DATA_RECORD_TABLE_ENTRY_SIZE);
+        unsigned int record_offset = read_u16_le(base + entry_offset);
+        unsigned int record_length = read_u16_le(base + entry_offset + 2);
+
+        if (record_offset + record_length > DATA_BUFFER_SIZE) {
+            continue;
+        }
+
+        unsigned char mapper = 0;
+        unsigned long size = 0;
+        char name[MAX_FILE_NAME_LENGTH + 1];
+        name[0] = '\0';
+
+        unsigned int pos = 0;
+        unsigned char *rec = base + record_offset;
+        while (pos + 2 <= record_length) {
+            unsigned char type = rec[pos];
+            unsigned char len = rec[pos + 1];
+            pos += 2;
+            if (pos + len > record_length) {
+                break;
+            }
+            switch (type) {
+                case TLV_NAME_OFFSET: {
+                    if (len >= 2) {
+                        unsigned int name_offset = read_u16_le(rec + pos);
+                        if (name_offset != 0xFFFFu) {
+                            read_string_from_pool(name, base, string_offset, string_size, name_offset);
+                        }
+                    }
+                    break;
+                }
+                case TLV_MAPPER:
+                    if (len >= 1) {
+                        mapper = rec[pos];
+                    }
+                    break;
+                case TLV_SIZE:
+                    if (len >= 4) {
+                        size = read_ulong(rec + pos);
+                    }
+                    break;
+                default:
+                    break;
+            }
+            pos += len;
+        }
+
+        strncpy(records[i].Name, name, MAX_FILE_NAME_LENGTH);
+        records[i].Name[MAX_FILE_NAME_LENGTH] = '\0';
+        records[i].Mapper = mapper;
+        records[i].Size = size;
+        records[i].Offset = 0;
+    }
+
+    (void)page_index;
+    return 1;
+}
+
 static void load_page_records(unsigned int page_index) {
     unsigned char *memory = (unsigned char *)MEMORY_START;
     unsigned int i;
@@ -191,6 +458,10 @@ static void load_page_records(unsigned int page_index) {
         if (*((unsigned char *)CTRL_PAGE) == (unsigned char)page_index) {
             break;
         }
+    }
+
+    if (parse_page_buffer(page_index)) {
+        return;
     }
 
     for (i = 0; i < FILES_PER_PAGE; i++) {
@@ -210,10 +481,7 @@ static void load_page_records(unsigned int page_index) {
     }
 
     for (; i < FILES_PER_PAGE; i++) {
-        records[i].Name[0] = '\0';
-        records[i].Mapper = 0;
-        records[i].Size = 0;
-        records[i].Offset = 0;
+        clear_record(&records[i]);
     }
 }
 
@@ -234,7 +502,7 @@ void readROMData(ROMRecord *records, unsigned int *recordCount, unsigned long *s
     count = read_total_count();
     paging_enabled = (ctrl_status == CTRL_MAGIC);
     if (!paging_enabled) {
-        if (count > FILES_PER_PAGE && count <= MAX_ROM_RECORDS && count != 0xFFFFu) {
+        if (count > FILES_PER_PAGE && count != 0xFFFFu) {
             paging_enabled = 1;
         }
     }
@@ -275,6 +543,7 @@ static int compare_names(const char *a, const char *b) {
     return strncmp(a, b, MAX_FILE_NAME_LENGTH);
 }
 
+// sort_records - Sort the ROM records by name using a simple bubble sort.
 static void sort_records(ROMRecord *list, unsigned char count) {
     for (unsigned char i = 0; i + 1 < count; i++) {
         for (unsigned char j = i + 1; j < count; j++) {
@@ -319,6 +588,7 @@ void execute_rst00() {
     __endasm;
 }
 
+// clear_screen_0 - Clear the screen in SCREEN 0 mode
 void clear_screen_0() {
     __asm
     ld      a, #0            ; Set SCREEN 0 mode
@@ -327,6 +597,7 @@ void clear_screen_0() {
     __endasm;
 }
 
+// clear_fkeys - Clear the function key strings in the BIOS area
 void clear_fkeys()
 {
     __asm
@@ -345,36 +616,6 @@ clear_loop:
     or c
     jp nz, clear_loop ; Repeat until all bytes are cleared
     __endasm;
-}
-
-// invert_chars - Invert the characters in the character table
-// This function will invert the characters from startChar to endChar in the character table. We use it to copy and invert the characters from the
-// normal character table area to the inverted character table area. This is to display the game names in the inverted character table.
-// Parameters:
-//   startChar - The first character to invert
-//   endChar - The last character to invert
-void invert_chars(unsigned char startChar, unsigned char endChar)
-{
-    unsigned int srcAddress, dstAddress;
-    unsigned char patternByte;
-    unsigned char i, c;
-    unsigned int base = ((unsigned int)vdp_reg4) << 11; // reg4 * 0x800
-
-    for (c = startChar; c <= endChar; c++)
-    {
-        // Each character has 8 bytes in the pattern table.
-        srcAddress  = base + ((unsigned int)c * 8);
-        // Calculate destination address (shift by +95 bytes)
-        dstAddress = srcAddress + (96*8);
-
-        // Flip all 8 bytes that define this character.
-        for (i = 0; i < 8; i++)
-        {
-            patternByte = Vpeek(srcAddress + i);
-            patternByte = ~patternByte;           // CPL (bitwise NOT)
-            Vpoke(dstAddress  + i, patternByte);
-        }
-    }
 }
 
 // print_str_inverted - Print a string using the inverted character table
@@ -452,45 +693,6 @@ int print_str_inverted_sliding(const char *str, int startPos)
     return 1;
 }
 
-// bios_chsns - Check if a key has been pressed
-// This function will check if a key has been pressed using the MSX BIOS routine CHSNS
-static unsigned char bios_chsns(void) __naked
-{
-    __asm
-    ld      iy,(#BIOS_EXPTBL-1)
-    push    ix
-    ld      ix,#BIOS_CHSNS
-    call    BIOS_CALSLT
-    pop     ix
-    jr      z, bios_chsns_no_key
-    ld      l,a
-    ld      h,#0
-    ret
-
-bios_chsns_no_key:
-    xor     a
-    ld      l,a
-    ld      h,a
-    ret
-    __endasm;
-}
-
-// bios_chget - Get a character from the keyboard buffer
-// This function will get a character from the keyboard buffer using the MSX BIOS routine.
-static unsigned char bios_chget(void) __naked
-{
-    __asm
-    ld      iy,(#BIOS_EXPTBL-1)
-    push    ix
-    ld      ix,#BIOS_CHGET
-    call    BIOS_CALSLT
-    pop     ix
-    ld      l,a
-    ld      h,#0
-    ret
-    __endasm;
-}
-
 // joystick_direction_to_key - Convert joystick direction to key code
 // This function will convert the joystick direction to the corresponding key code.
 static int joystick_direction_to_key(unsigned char dir)
@@ -519,6 +721,10 @@ static int wait_for_key_with_scroll(const char *name, unsigned int row)
     size_t len = strlen(name);
     int shouldScroll = (!use_80_columns && len > name_col_width);
     const unsigned int scrollDelay = 30U; // 0.5 seconds at 60 Hz
+    unsigned char row_width = menu_ui_row_width();
+    unsigned char highlight_width = menu_ui_highlight_width();
+    char row_text[81];
+    char name_window[MAX_FILE_NAME_LENGTH + 1];
 
     while (1)
     {
@@ -570,8 +776,15 @@ static int wait_for_key_with_scroll(const char *name, unsigned int row)
                 int lenInt = (int)len;
 
                 while (attempts < lenInt && !printed) {
-                    Locate(1, row);
-                    printed = print_str_inverted_sliding(name, startPos);
+                    printed = build_sliding_name_window(name, startPos, name_window, name_col_width);
+                    if (printed) {
+                        build_menu_row_text(&records[currentIndex % FILES_PER_PAGE], name_window, row_text, row_width);
+                        Locate(0, row);
+                        PrintChar('>');
+                        if (highlight_width > 1) {
+                            menu_ui_print_str_inverted_width(row_text + 1, (unsigned char)(highlight_width - 1));
+                        }
+                    }
                     startPos++;
                     if (startPos >= lenInt) {
                         startPos = 0;
@@ -584,10 +797,6 @@ static int wait_for_key_with_scroll(const char *name, unsigned int row)
 
 
     }
-
-    
-
-
     
 }
 
@@ -596,7 +805,10 @@ static int wait_for_key_with_scroll(const char *name, unsigned int row)
 char* mapper_description(int number) {
     // Array of strings for the descriptions
     const char *descriptions[] = {"PL-16", "PL-32", "KonSCC", "Linear", "ASC-08", "ASC-16", "Konami","NEO-8","NEO-16","SYSTEM"};	
-    number &= ~SOURCE_SD_FLAG;
+    number &= ~(SOURCE_SD_FLAG | FOLDER_FLAG | OVERRIDE_FLAG);
+    if (number & MP3_FLAG) {
+        return "MP3";
+    }
     if (number <= 0 || number > 10) {
         return "Unknown";
     }
@@ -608,10 +820,9 @@ char* mapper_description(int number) {
 // displayMenu - Display the menu on the screen
 // This function will display the menu on the screen. It will print the header, the files on the current page and the footer with the page number and options.
 void displayMenu() {
-    Locate(0, 0);
-    print_title_line();
-    Locate(0, 1);
-    print_delimiter_line();
+    if (!frame_rendered) {
+        menu_ui_render_menu_frame();
+    }
     if (paging_enabled && currentPage > 0) {
         load_page_records((unsigned int)(currentPage - 1));
     }
@@ -626,27 +837,31 @@ void displayMenu() {
     unsigned int line = 0;
     for (unsigned int idx = startIndex; idx < endIndex; idx++, line++) {
         Locate(0, 2 + line); // Position on the screen, starting at line 2
-        const char *source = (records[line].Mapper & SOURCE_SD_FLAG) ? "SD" : "FL";
-        if (use_80_columns) {
-            printf(" %-62.62s %04lu %-2s %-7s", records[line].Name, records[line].Size/1024, source, mapper_description(records[line].Mapper));
-        } else {
-            printf(" %-22.22s %04lu %-2s %-7s", records[line].Name, records[line].Size/1024, source, mapper_description(records[line].Mapper));
+        {
+            unsigned char row_width = menu_ui_row_width();
+            char row_text[81];
+            build_menu_row_text(&records[line], NULL, row_text, row_width);
+            printf("%s", row_text);
         }
     }
 
-    for (; line < FILES_PER_PAGE; line++) {
-        Locate(0, 2 + line);
-        printf("                                 "); // clear unused lines to avoid stale entries
+    {
+        unsigned char start_row = (unsigned char)(2 + line);
+        menu_ui_clear_rows(start_row, 21);
     }
-    // footer
-    Locate(0, 21);
-    print_delimiter_line();
-    Locate(0, 22);
-    print_footer_line();
+
+    menu_ui_update_footer_page();
     if (totalFiles > 0) {
-        Locate(0, (currentIndex % FILES_PER_PAGE) + 2); // Position the cursor on the selected file
-        printf(">"); // Print the cursor
-        print_str_inverted(records[currentIndex % FILES_PER_PAGE].Name); // Print the selected file name inverted
+        unsigned char row = (unsigned char)((currentIndex % FILES_PER_PAGE) + 2);
+        unsigned char row_width = menu_ui_row_width();
+        unsigned char highlight_width = menu_ui_highlight_width();
+        char row_text[81];
+        build_menu_row_text(&records[currentIndex % FILES_PER_PAGE], NULL, row_text, row_width);
+        Locate(0, row); // Position the cursor on the selected file
+        PrintChar('>'); // Print the cursor
+        if (highlight_width > 1) {
+            menu_ui_print_str_inverted_width(row_text + 1, (unsigned char)(highlight_width - 1)); // Print shortened row inverted
+        }
 
     }
 }
@@ -660,9 +875,9 @@ void helpMenu()
     
     Cls(); // Clear the screen
     Locate(0,0);
-    print_title_line();
+    menu_ui_print_title_line();
     Locate(0, 1);
-    print_delimiter_line();
+    menu_ui_print_delimiter_line();
     Locate(0, 2);
     printf("Use [UP]  [DOWN] to navigate the menu");
     Locate(0, 3);
@@ -672,54 +887,39 @@ void helpMenu()
     Locate(0, 5);
     printf("  selected rom file");
     Locate(0, 6);
-    printf("Press [F] to search the ROM list");
+    printf("Press [/] to search the ROM list");
     Locate(0, 7);
     printf("Type, then [ENTER] to jump to match");
     Locate(0, 8);
     printf("Press [H] to display the help screen");
     Locate(0, 9);
-    printf("Press [C] to toggle columns");
+    printf("Press [C] to toggle 40/80 columns");
     Locate(0, 21);
-    print_delimiter_line();
+    menu_ui_print_delimiter_line();
     Locate(0, 22);
     printf("Press any key to return to the menu!");
     InputChar();
+    frame_rendered = 0;
     displayMenu();
     navigateMenu();
 }
+
 
 // loadGame - Load the game from the flash memory
 // This function will load the game from the flash memory based on the index. 
 void loadGame(int index) 
 {
     ROMRecord *record = &records[index % FILES_PER_PAGE];
+    if (record_is_folder(record))
+    {
+        return;
+    }
     if ((record->Mapper & ~SOURCE_SD_FLAG) != 0)
     {
         Poke(ROM_SELECT_REGISTER, index); // Set the game index (absolute)
         execute_rst00(); // Execute RST 00h to reset the MSX computer and load the game
         execute_rst00();
     }
-}
-
-static void toggle_column_mode(void) {
-    int target_80 = !use_80_columns;
-    if (target_80) {
-        if (MENU_FORCE_40_COLUMNS) {
-            print_last_line_text("80-column mode disabled. Press key.");
-            (void)bios_chget();
-            clear_last_line();
-            return;
-        }
-        if (!supports_80_column_mode()) {
-            print_last_line_text("MSX lacks 80-column mode. Press key.");
-            (void)bios_chget();
-            clear_last_line();
-            return;
-        }
-    }
-    set_text_mode(target_80);
-    invert_chars(32, 126);
-    displayMenu();
 }
 
 // --- Input/navigation ---
@@ -739,10 +939,15 @@ void navigateMenu()
         Locate(0, 23);
         //printf("Key: %3d", key);
         //printf("Size: %05lu/15872", totalSize/1024);
-        //debug
-        //Locate(20, 23);
-        //printf("Memory Mapper: Off");
-        //printf("CPage: %2d Index: %2d", currentPage, currentIndex);
+        if (totalFiles == 0) {
+            key = (char)bios_chget();
+            if (key == 27) {
+                enter_directory(NULL);
+                refresh_menu_state();
+            }
+            continue;
+        }
+
         unsigned int currentRow = (currentIndex%FILES_PER_PAGE) + 2;
 
         key = wait_for_key_with_scroll(records[currentIndex % FILES_PER_PAGE].Name, currentRow);
@@ -751,12 +956,12 @@ void navigateMenu()
         char fkey = Fkeys();
         (void)fkey;
 
-        Locate(0, currentRow); // Position the cursor on the previously selected file
-        printf(" "); // Clear the cursor
-        if (use_80_columns) {
-            printf("%-60.60s", records[currentIndex % FILES_PER_PAGE].Name);
-        } else {
-            printf("%-22.22s", records[currentIndex % FILES_PER_PAGE].Name); // Print only the first name column width characters
+        {
+            unsigned char row_width = menu_ui_row_width();
+            char row_text[81];
+            build_menu_row_text(&records[currentIndex % FILES_PER_PAGE], NULL, row_text, row_width);
+            Locate(0, currentRow); // Position the cursor on the previously selected file
+            printf("%s", row_text); // Restore full row
         }
         switch (key) 
         {
@@ -796,8 +1001,8 @@ void navigateMenu()
                 }
                 break;
             case 27: // ESC
-                // load Nextor
-                //loadGame(0); // Load the Nextor ROM
+                enter_directory(NULL);
+                refresh_menu_state();
                 break;
             case 72: // H - Help (uppercase H)
             case 104: // h - Help (lowercase h)
@@ -806,10 +1011,12 @@ void navigateMenu()
                 break;
             case 99: // C 
             case 67: // c 
-                toggle_column_mode();
+                if (menu_ui_try_toggle_columns()) {
+                    frame_rendered = 0;
+                    displayMenu();
+                }
                 break;
-            case 70: // F - Search (uppercase F)
-            case 102: // f - Search (lowercase f)
+            case 47: // / - Search
                 if (read_search_query(search_query, SEARCH_MAX_LEN)) {
                     send_query_to_pico(search_query);
                     Poke(CTRL_CMD, CMD_FIND_FIRST);
@@ -820,27 +1027,48 @@ void navigateMenu()
                     }
                     unsigned int match = read_match_index();
                     if (match == 0xFFFFu || match >= totalFiles) {
-                        print_last_line_text("Not found. Press any key.");
+                        menu_ui_print_last_line_text("Not found. Press any key.");
                         (void)bios_chget();
-                        clear_last_line();
+                        menu_ui_clear_last_line();
                     } else {
                         currentIndex = (int)match;
                         currentPage = (currentIndex / FILES_PER_PAGE) + 1;
-                        clear_last_line();
+                        menu_ui_clear_last_line();
                     }
                 }
                 displayMenu();
                 break;
             case 13: // Enter
             case 32: // Space
-                // Load the game
-                loadGame(currentIndex); // Load the selected game
+                if (record_is_folder(&records[currentIndex % FILES_PER_PAGE])) {
+                    char selected_name[CTRL_QUERY_SIZE];
+                    trim_name_to_buffer(records[currentIndex % FILES_PER_PAGE].Name, selected_name, CTRL_QUERY_SIZE - 1);
+                    if (selected_name[0] == '.' && selected_name[1] == '.' && selected_name[2] == '\0') {
+                        enter_directory(NULL);
+                    } else {
+                        enter_directory(records[currentIndex % FILES_PER_PAGE].Name);
+                    }
+                    refresh_menu_state();
+                } else if (record_is_mp3(&records[currentIndex % FILES_PER_PAGE])) {
+                    show_mp3_screen((unsigned int)currentIndex);
+                } else {
+                    show_rom_screen((unsigned int)currentIndex);
+                }
                 break;
         }
-        Locate(0, (currentIndex%FILES_PER_PAGE) + 2); // Position the cursor on the selected file
-        printf(">"); // Print the cursor
-        print_str_inverted(records[currentIndex % FILES_PER_PAGE].Name); // Print the selected file name
-        Locate(0, (currentIndex%FILES_PER_PAGE) + 2); // Position the cursor on the selected file
+        if (totalFiles > 0) {
+            unsigned char row = (unsigned char)((currentIndex % FILES_PER_PAGE) + 2);
+            unsigned char row_width = menu_ui_row_width();
+            unsigned char highlight_width = menu_ui_highlight_width();
+            char row_text[81];
+            build_menu_row_text(&records[currentIndex % FILES_PER_PAGE], NULL, row_text, row_width);
+            Locate(0, row); // Position the cursor on the selected file
+            PrintChar('>'); // Print the cursor
+            if (highlight_width > 1) {
+                menu_ui_print_str_inverted_width(row_text + 1, (unsigned char)(highlight_width - 1)); // Print shortened row inverted
+            }
+            Locate(0, row); // Position the cursor on the selected file
+        }
     }
 }
 
@@ -855,12 +1083,13 @@ void main() {
     if (totalPages == 0) {
         totalPages = 1;
     }
-    init_text_mode();
+    menu_ui_init_text_mode();
     invert_chars(32, 126); // Invert the characters from 32 to 126
     clear_fkeys(); // Clear the function keys
     //KillKeyBuffer(); // Clear the key buffer
 
     // Display the menu
+    menu_ui_render_menu_frame();
     displayMenu();
     // Activate navigation
     navigateMenu();
@@ -870,7 +1099,7 @@ void main() {
 static int read_search_query(char *buffer, int max_len) {
     int len = 0;
     buffer[0] = '\0';
-    print_last_line_text("Search: ");
+    menu_ui_print_last_line_text("Search: ");
     for (int i = 0; i < 23; i++) {
         PrintChar(' ');
     }
@@ -906,42 +1135,23 @@ static int read_search_query(char *buffer, int max_len) {
     }
 }
 
-static void clear_last_line(void) {
-    Locate(0, 23);
-    for (int i = 0; i < 28; i++) {
-        PrintChar(' ');
-    }
-    Locate(0, 23);
+#pragma disable_warning 85
+void msx_wait(uint16_t times_jiffy)
+{
+    __asm
+    ei
+    WAIT:
+        halt
+        dec hl
+        ld a,h
+        or l
+        jr nz, WAIT
+        ret
+    __endasm;
 }
 
-static void print_last_line_text(const char *text) {
-    Locate(0, 23);
-    int col = 0;
-    while (*text && col < (SCREEN_WIDTH - 1)) {
-        PrintChar((unsigned char)*text++);
-        col++;
-    }
+void delay_ms(uint16_t milliseconds)
+{
+    msx_wait(milliseconds / 20);
 }
 
-static void print_delimiter_line(void) {
-    unsigned char width = use_80_columns ? 78 : 38;
-    for (unsigned char i = 0; i < width; i++) {
-        PrintChar('-');
-    }
-}
-
-static void print_title_line(void) {
-    if (use_80_columns) {
-        printf("MSX PICOVERSE 2350%44s[EXPLORER %s]", "", EXPLORER_VERSION);
-    } else {
-        printf("MSX PICOVERSE 2350%4s[EXPLORER %s]", "", EXPLORER_VERSION);
-    }
-}
-
-static void print_footer_line(void) {
-    if (use_80_columns) {
-        printf("Page: %02d/%02d%46s[F - Find] [H - Help]", currentPage, totalPages, "");
-    } else {
-        printf("Page: %02d/%02d%6s[F - Find] [H - Help]", currentPage, totalPages, "");
-    }
-}

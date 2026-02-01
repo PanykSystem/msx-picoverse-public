@@ -13,7 +13,7 @@ PicoVerse is designed as an open-source, independent, and documented MSX cartrid
 ## Project Highlights
 - Multi-ROM loader with an on-screen menu and mapper auto-detection.
 - Single-ROM LoadROM workflow for instant booting of one title without entering the menu.
-- Explorer firmware (RP2350) merges flash and microSD ROMs, labels the source (FL/SD), and supports on-device search. 
+- Explorer firmware (RP2350) merges flash and microSD ROMs, labels the source (FL/SD), adds MP3 playback, and supports on-device search.
 - Ready-made Nextor builds with USB (RP2040) or microSD (RP2350) storage bridges.
 - PC-side tooling that generates UF2 images locally for quick drag-and-drop flashing.
 - BOMs, and production-ready Gerbers.
@@ -96,7 +96,7 @@ Interactive BOM available at [PicoVerse 2040 BOM](https://htmlpreview.github.io/
 3. **Generate the UF2 image**:
    - For multiple titles, place your `.rom` files beside the MultiROM tool for your cartridge family (`2040/software/multirom/multirom.exe` or `2350/software/multirom/multirom.exe`) and run `multirom.exe` to create `multirom.uf2`.
    - For an instant boot into a single game, place the desired `.rom` next to the LoadROM tool for your cartridge family and run `loadrom.exe <file> [-o custom.uf2]` to create a dedicated UF2 that skips the menu.
-   - For a combined flash + microSD menu on RP2350, use the Explorer tool (`2350/software/explorer/tool/explorer.exe`) to create `explorer.uf2`.
+   - For a combined flash + microSD menu on RP2350, use the Explorer tool (`2350/software/explorer/tool/explorer.exe`) to create `explorer.uf2`, then copy extra `.rom` and `.mp3` files to the microSD card.
 4. **Flash the firmware**:
    - Hold BOOTSEL while connecting the cartridge to your PC via USB-C.
    - Copy the freshly generated UF2 (`multirom.uf2`, `loadrom.uf2`, or `explorer.uf2`) to the RPI-RP2 drive that appears.
@@ -138,11 +138,11 @@ Consult the LoadROM manuals (English, Spanish, Japanese, and Brazilian Portugues
 |---|---|
 |![](/images/Explorer_40.png)|![](/images/Explorer_80.png)|
 
-Explorer is a 2350-only firmware that merges ROMs stored in flash with additional ROMs on the microSD card. ROMs are labeled with source tags (FL/SD), the list supports paging, and you can search by name directly in the menu. Use the Explorer tool to build the UF2 and copy extra ROMs to the microSD card. See the Explorer manual for limits (flash vs SD capacity, 256 KB SD ROM limit, and supported formats).
+Explorer is a 2350-only firmware that merges ROMs stored in flash with additional ROMs and MP3 files on the microSD card. ROMs are labeled with source tags (FL/SD), MP3 entries open a player screen, the list supports paging, and you can search by name directly in the menu. Use the Explorer tool to build the UF2 and copy extra ROMs and MP3 files to the microSD card. See the Explorer manual for limits (flash vs SD capacity, 256 KB SD ROM limit, and supported formats).
 
-You can have up to 1024 ROMs combining flash and microSD entries (128 from flash, up to 896 from SD). The menu auto-detects whether the MSX supports 80-column text mode and boots accordingly; you can also press `C` at any time to toggle between 40- and 80-column layouts.
+You can have up to 1024 entries per folder view (folders + ROMs + MP3s; the root view can also include flash entries). The menu auto-detects whether the MSX supports 80-column text mode and boots accordingly; you can also press `C` at any time to toggle between 40- and 80-column layouts.
 
-A search function is available by pressing `F` in the menu. Type part of a ROM name and press Enter to jump to the first matching entry. Press `H` to view the help screen.
+A search function is available by pressing `/` in the menu. Type part of a ROM name and press Enter to jump to the first matching entry. Press `H` to view the help screen.
 
 ## Compatibility & Requirements
 - Works with MSX, MSX2, MSX2+, and MSX TurboR systems. Mapper support covers the most common game and utility formats.

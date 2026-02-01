@@ -5,9 +5,9 @@
 // explorer.c - Windows console application to create the explorer firmware for the MSX PICOVERSE 2350
 //
 // This program creates a UF2 file to program the Raspberry Pi Pico with the MSX PICOVERSE 2350 Explorer firmware. The UF2 file is
-// created with the combined PICO firmware binary file, the MSX MENU ROM file, the configuration file and the ROM files. The 
-// configuration file contains the information of each ROM file processed by the tool and it is incorporated into the MENU ROM file 
-// so the MSX can read it.
+// created with the combined PICO firmware binary file, the MSX MENU ROM file, the configuration file and the ROM files. The
+// configuration file contains the information of each ROM file processed by the tool and it is stored in flash immediately after
+// the full 32KB MENU ROM so the Pico firmware can read it.
 // 
 // This work is licensed  under a "Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International
 // License". https://creativecommons.org/licenses/by-nc-sa/4.0/
@@ -30,9 +30,10 @@
 #endif
 
 #define UF2FILENAME             "explorer.uf2"  // UF2 produced by this tool
-#define MENU_COPY_SIZE          (16 * 1024)     // Portion of menu ROM copied verbatim before config payload
+#define MENU_COPY_SIZE          (32 * 1024)     // Full menu ROM copied verbatim before config payload
+#define CONFIG_AREA_SIZE        (16 * 1024)     // Size of the configuration area stored after the menu ROM
+#define TARGET_FILE_SIZE        (MENU_COPY_SIZE + CONFIG_AREA_SIZE) // Size of menu ROM + configuration area
 #define MAX_FILE_NAME_LENGTH    60              // Maximum length of a ROM name
-#define TARGET_FILE_SIZE        32768           // Size of the combined MSX MENU ROM and the configuration file
 #define FLASH_START             0x10000000      // Start of the flash memory on the Raspberry Pi Pico
 #define MAX_ROM_FILES           128             // Maximum number of ROM files
 #define MAX_TOTAL_ROM_SIZE      (14U * 1024U * 1024U) // Cap combined ROM payload to 14 MB
@@ -72,8 +73,6 @@ static uint8_t mapper_number_from_description(const char *description) {
 #if TARGET_FILE_SIZE < MENU_COPY_SIZE // Sanity check
 #error "TARGET_FILE_SIZE must be larger than MENU_COPY_SIZE"
 #endif
-
-#define CONFIG_AREA_SIZE        (TARGET_FILE_SIZE - MENU_COPY_SIZE) // Size of the configuration area in the MENU ROM
 
 // Tracks the ROMs discovered on disk so they can be appended later in scan order.
 typedef struct {
@@ -641,8 +640,8 @@ int main(int argc, char *argv[])
         return 1;
     }
 
-    // Final flash image layout: [firmware][config area][menu slice][Nextor ROM + scanned ROM payloads]
-    const size_t total_size = firmware_size + CONFIG_AREA_SIZE + MENU_COPY_SIZE + total_rom_size;
+    // Final flash image layout: [firmware][menu ROM][config area][Nextor ROM + scanned ROM payloads]
+    const size_t total_size = firmware_size + MENU_COPY_SIZE + CONFIG_AREA_SIZE + total_rom_size;
     uint8_t *combined_buffer = (uint8_t *)malloc(total_size);
     if (!combined_buffer) {
         printf("Failed to allocate combined buffer\n");
@@ -655,11 +654,11 @@ int main(int argc, char *argv[])
     memcpy(combined_buffer + offset, ___pico_explorer_build_explorer_bin, firmware_size);
     offset += firmware_size;
 
-    // Copy the portion of the MSX menu ROM that precedes the dynamic configuration structure.
+    // Copy the full MSX menu ROM.
     memcpy(combined_buffer + offset, ___msx_dist_menu_rom, MENU_COPY_SIZE);
     offset += MENU_COPY_SIZE;
 
-    // Drop in the generated configuration block (ROM metadata + offsets).
+    // Drop in the generated configuration block (ROM metadata + offsets) after the menu ROM.
     memcpy(combined_buffer + offset, config_buffer, CONFIG_AREA_SIZE);
     offset += CONFIG_AREA_SIZE;
 

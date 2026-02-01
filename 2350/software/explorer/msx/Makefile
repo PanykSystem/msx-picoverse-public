@@ -33,16 +33,22 @@ endif
 VERSION ?= v1.00
 CCDEFS = -DEXPLORER_VERSION=\"$(VERSION)\"
 
-SOURCES = menu.c
+SOURCES = menu.c menu_state.c menu_ui.c menu_input.c screen_rom.c screen_mp3.c
+SRCS = $(addprefix $(SRCDIR)/,$(SOURCES))
+RELS = $(SOURCES:%.c=$(BINDIR)/%.rel)
 OUTFILE = menu.rom
 
 all: clean compile package
 
 compile: $(BINDIR)/$(OUTFILE)
 
-$(BINDIR)/menu.ihx: $(SRCDIR)/$(SOURCES)
-	@echo "Compiling $@"
-	$(CC) $(CCFLAGS) $(CCDEFS) $(PLATFORM) --use-stdout --no-std-crt0 $(CRT0) $(FUSIONLIB) -I $(FUSIONHEADER) $< -o $@ 
+$(BINDIR)/%.rel: $(SRCDIR)/%.c
+	@echo "Compiling $<"
+	$(CC) $(CCFLAGS) $(CCDEFS) $(PLATFORM) -c --no-std-crt0 -I $(FUSIONHEADER) $< -o $@
+
+$(BINDIR)/menu.ihx: $(RELS)
+	@echo "Linking $@"
+	$(CC) $(CCFLAGS) $(CCDEFS) $(PLATFORM) --no-std-crt0 $(CRT0) $(FUSIONLIB) $^ -o $@ 
 
 $(BINDIR)/$(OUTFILE): $(BINDIR)/menu.ihx
 	@echo "Building $(OUTFILE)..."

@@ -24,10 +24,14 @@ if (EXISTS ${picoVscode})
 endif()
 # ====================================================================================
 set(PICO_BOARD pico2 CACHE STRING "Board type")
-set(PICO_COPY_TO_RAM 1)
+set(PICO_COPY_TO_RAM 0)
 
 # Pull in Raspberry Pi Pico SDK (must be before project)
 include(pico_sdk_import.cmake)
+
+# Fetch pico-extras if not available locally
+set(PICO_EXTRAS_FETCH_FROM_GIT ON)
+include(pico_extras_import.cmake)
 
 project(explorer C CXX ASM)
 
@@ -38,13 +42,15 @@ pico_sdk_init()
 add_executable(explorer 
         hw_config.c
         nextor.c 
-        explorer.c 
+    explorer.c 
+    mp3.c
 )
 
 #pico_generate_pio_header(multirom ${CMAKE_CURRENT_SOURCE_DIR}/io_9f_write_monitor.pio)
 #pico_generate_pio_header(multirom ${CMAKE_CURRENT_SOURCE_DIR}/io_9f_read_monitor.pio)
 
 add_subdirectory(lib/no-OS-FatFS-SD-SDIO-SPI-RPi-Pico/src build)
+add_subdirectory(lib/picomp3lib/src picomp3lib_build)
 
 pico_set_program_name(explorer "explorer")
 pico_set_program_version(explorer "0.1")
@@ -58,11 +64,16 @@ target_link_libraries(explorer
         pico_stdlib
         no-OS-FatFS-SD-SDIO-SPI-RPi-Pico
         pico_multicore
+    pico_audio_i2s
+    picomp3lib
         )
+
+target_compile_definitions(explorer PRIVATE
+)
 
 # Add the standard include files to the build
 target_include_directories(explorer PRIVATE
-        ${CMAKE_CURRENT_LIST_DIR}
+    ${CMAKE_CURRENT_LIST_DIR}
 )
 
 pico_add_extra_outputs(explorer)

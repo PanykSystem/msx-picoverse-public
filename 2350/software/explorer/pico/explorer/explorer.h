@@ -42,7 +42,7 @@
 #define PIN_IORQ   26   // IO Request line from MSX
 #define PIN_SLTSL  27   // Slot Select for this cartridge slot
 #define PIN_WAIT    28  // WAIT line to MSX 
-#define PIN_BUSSDIR 29  // Bus direction line 
+#define PIN_BUSSDIR 37  // Bus direction line 
 #define PIN_PSRAM   47  // PSRAM select line
 
 static inline void setup_gpio();

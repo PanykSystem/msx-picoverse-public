@@ -2,7 +2,7 @@
 
 The PicoVerse 2040 cartridge extends MSX systems by flashing different Raspberry Pi Pico firmwares. While the MultiROM firmware offers a menu-driven launcher, some workflows require flashing a single ROM image that boots immediately on power‑on. That is the purpose of the `loadrom` firmware and of the companion `loadrom.exe` console tool documented here.
 
-`loadrom.exe` bundles the Pico firmware blob (`loadrom.bin`), a configuration record (game name, mapper code, ROM size and offset), and a single MSX ROM payload into an RP2040-compatible UF2 image. Copying the generated UF2 to the Pico’s `RPI-RP2` drive programs the cartridge so that it boots directly into the embedded ROM whenever the MSX starts.
+`loadrom.exe` bundles the Pico firmware, a configuration record (game name, mapper code, ROM size and offset), and a single MSX ROM payload into an RP2040-compatible UF2 image. Copying the generated UF2 to the Pico’s `RPI-RP2` drive programs the cartridge so that it boots directly into the embedded ROM whenever the MSX starts.
 
 ---
 
@@ -46,7 +46,7 @@ Penguin Adventure.PL-32.ROM
 Space Manbow.KonSCC.rom
 ```
 
-Tags are case-insensitive. `SYSTEM` is ignored (reserved by firmware). If no valid tag is present the tool falls back to heuristic detection.
+Tags are case-insensitive. If no valid tag is present, the tool falls back to heuristic detection.
 
 ---
 
@@ -54,33 +54,17 @@ Tags are case-insensitive. `SYSTEM` is ignored (reserved by firmware). If no val
 
 1. Place `loadrom.exe` in a working directory alongside the desired ROM file.
 2. Open a Command Prompt or PowerShell window in that directory.
-3. Run `loadrom` pointing to the ROM and optionally overriding the UF2 name:
+3. Run `loadrom.exe` pointing to the ROM and optionally overriding the UF2 name:
    ```
    loadrom.exe "Space Manbow.rom" -o space_manbow.uf2
    ```
 4. Observe the console output:
-   - Tool banner with embedded version (controlled by the Makefile `VERSION` variable).
+   - Tool banner with embedded version.
    - Resolved ROM name (max 50 characters), size, mapper result, and Pico flash offset.
    - Progress message when UF2 blocks are written.
 5. Put the Pico in BOOTSEL mode (hold BOOTSEL, plug USB) to mount the `RPI-RP2` drive.
 6. Copy the generated UF2 file (e.g., `space_manbow.uf2`) to the drive. The Pico reboots once flashing completes.
 7. Insert the PicoVerse cartridge into the MSX and power on—the embedded ROM boots immediately without a menu.
-
----
-
-## Output layout details
-
-The UF2 image consists of three contiguous regions:
-
-1. **Firmware blob** – the `loadrom.bin` firmware from `../pico/loadrom/dist/` embedded via `loadrom.h`.
-2. **Configuration record** – 59 bytes total:
-   - 50 bytes: zero-padded game name (ASCII, truncated if longer).
-   - 1 byte : mapper ID.
-   - 4 bytes: little-endian ROM size.
-   - 4 bytes: little-endian flash offset (fixed to the size of the config record).
-3. **ROM payload** – streamed directly from disk, padded to 256-byte UF2 blocks.
-
-The UF2 writer sets `UF2_FLAG_FAMILYID_PRESENT` and stores the RP2040 family ID (`0xE48BFF56`) in the `fileSize` field, ensuring compatibility with the RP2040 boot ROM. Each block targets flash address `0x10000000 + n * 256`.
 
 ---
 
@@ -108,8 +92,7 @@ The UF2 writer sets `UF2_FLAG_FAMILYID_PRESENT` and stores the RP2040 family ID 
 
 - Cross-platform builds (Linux/macOS).
 - Optional verification hashes for the ROM payload.
-- GUI wrapper to simplify mapper forcing and ROM selection.
 - Support for additional mapper variants or auto-detected metadata (year, publisher).
 
-Author: Cristiano Almeida Goncalves  
-Last updated: 01/08/2026
+Author: Cristiano Goncalves  
+Last updated: 01/31/2026
