@@ -1,0 +1,13 @@
+2350\software\explorer
+  - MP3 Player
+  - ROM screen with mapper override
+  - New on-demand mapper detection for microSD
+  - Introducing audio profiles for ROMs
+  - New wiring layout for the A1334 DAC board
+  - Refactoring MSX menu code
+  - Refactoring MSX menu ROM organization
+  - Review limits, now 1024 ROMs per folder on the microSD, 128 ROMs on the flash memory
+  - Imposing 256KB limit for microSD ROM size at this moment
+
+Documentation update
+
