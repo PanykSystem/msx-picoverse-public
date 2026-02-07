@@ -10,6 +10,13 @@ PicoVerse is a community-driven effort to build versatile MSX cartridges powered
 
 PicoVerse is designed as an open-source, independent, and documented MSX cartridge platform. Compatibility with other projects is neither a goal nor guaranteed (I tested some without much success); running third‑party software on PicoVerse hardware, or PicoVerse firmware on other boards, is at your own risk. The source and manufacturing files are openly available so you can learn, experiment, and build on them for the MSX community, subject to the project license.
 
+## Whats New in PicoVerse?
+
+- New LoadROM tool for 2040 based on PIO, which allows more reliable ROM loading and better support for edge cases. ***(NEW!)***
+- New Explorer firmware for 2350 that merges flash and microSD ROMs into a single menu with source labels, search, and MP3 playback. ***(NEW!)***
+- New hardware revision for 2350 with microSD slot, ESP8266 header, and I2S DAC. BOM and Gerbers available. ***(NEW!)***
+- Updated documentation with detailed guides for the new tools and features. ***(NEW!)***
+
 ## Project Highlights
 - Multi-ROM loader with an on-screen menu and mapper auto-detection.
 - Single-ROM LoadROM workflow for instant booting of one title without entering the menu.
@@ -35,6 +42,7 @@ PicoVerse is designed as an open-source, independent, and documented MSX cartrid
 **Reference Material**
 - [PicoVerse 2040 Features Overview](/docs/msx-picoverse-2040-features.md)
 - [PicoVerse 2350 Features Overview](/docs/msx-picoverse-2350-features.md)
+- [MSX PicoVerse 2040 LoadROM PIO Implementation](/docs/msx-picoverse-2040-loadrom-pio.md) ***(NEW!)***
 - [Nextor Pico Bridge Protocol](/docs/Nextor-Pico-Bridge-Protocol.md)
 
 ## Hardware Variants
@@ -78,10 +86,27 @@ Interactive BOM available at [PicoVerse 2040 BOM](https://htmlpreview.github.io/
 - Explorer firmware can load ROMs from both flash and microSD, with source labels and search.
 - Shares the same ROM mapper support list as the 2040 build.
 
-#### Bill of Materials
+#### Bill of Materials ***(NEW!)***
+
+![alt text](/images/2026-02-07_19-11.png)
+
+Interactive BOM available at [PicoVerse 2350 BOM](https://htmlpreview.github.io/?https://raw.githubusercontent.com/cristianoag/msx-picoverse-public/refs/heads/main/2350/hardware/MSX_PicoVerse_2350_1.0-BETA_bom.html) 
+
 | Reference | Description | Quantity | Link |
 | --- | --- | --- | --- |
-| To be updated! |
+| U1 | WaveShare Core2350B Dev Board 48 GPIO pins exposed (8Mb PSRAM)| 1 | [AliExpress](https://pt.aliexpress.com/item/1005009578742534.html?spm=a2g0o.order_list.order_list_main.112.62b91802b6L8HW&gatewayAdapt=glo2bra) |
+|U2| UDA1334A I2S Stereo DAC| 1 | [AliExpress](https://s.click.aliexpress.com/e/_c3gam5lH) |
+|U3| ESP-01 ESP8266 WiFi Module| 1 | [AliExpress](https://s.click.aliexpress.com/e/_c4a5rnGj) |
+|C1| 0603 0.1 µF Ceramic Capacitor | 1 | [AliExpress](https://s.click.aliexpress.com/e/_c3tkUxHz) |
+|C2,C3| 0603 10 µF Ceramic Capacitor | 2 | [AliExpress](https://s.click.aliexpress.com/e/_c3tkUxHz)|
+|R1| 0603 2 KΩ Resistor | 1 | [AliExpress](https://s.click.aliexpress.com/e/_c43uKcEj)|
+|R2, R3, R6, R7, R8| 0603 10 kΩ Resistor | 4 | [AliExpress](https://s.click.aliexpress.com/e/_c43uKcEj)|
+|R4, R5| 0603 5.1 kΩ Resistor | 2 | [AliExpress](https://s.click.aliexpress.com/e/_c43uKcEj)|
+|R9, R10| 0603 330 Ω Resistor | 2 | [AliExpress](https://s.click.aliexpress.com/e/_c43uKcEj)|
+|D1| 1N5819 SOD-123 Diode | 1 | [AliExpress](https://s.click.aliexpress.com/e/_c4WEKCuz) |
+|SW1| Tactile Push Button Switch | 1 | [AliExpress](https://s.click.aliexpress.com/e/_c2IPGkzv) |
+|J1| USB-C 16 Pin Connector | 1 | [AliExpress](https://s.click.aliexpress.com/e/_c4PtBc51) |
+|J2| microSD Card Slot | 1 | [AliExpress](https://s.click.aliexpress.com/e/_c4Pzbd7Z) |
 
 ## Repository Contents
 - `hardware/` – Production-ready Gerbers, fabrication notes, and BOMs for each supported dev board.
