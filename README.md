@@ -159,9 +159,14 @@ Consult the LoadROM manuals (English, Spanish, Japanese, and Brazilian Portugues
 
 ## Explorer Firmware (RP2350)
 
-|Explorer Menu 40 Columns|Explorer Menu 80 Columns|
+|Explorer Menu - 80 Columns|Explorer Search|
 |---|---|
-|![](/images/Explorer_40.png)|![](/images/Explorer_80.png)|
+|![](/images/WIN_20260207_19_59_37_Pro.jpg)|![](/images/WIN_20260207_20_00_51_Pro.jpg)|
+|<center>**MP3 Selection Screen**|<center>**MP3 Player Screen**|
+|![](/images/WIN_20260207_20_01_21_Pro.jpg)|![](/images/WIN_20260207_20_01_58_Pro.jpg)|
+|<center>**ROM Details Screen**||
+|![](/images/WIN_20260207_20_03_20_Pro.jpg)||
+
 
 Explorer is a 2350-only firmware that merges ROMs stored in flash with additional ROMs and MP3 files on the microSD card. ROMs are labeled with source tags (FL/SD), MP3 entries open a player screen, the list supports paging, and you can search by name directly in the menu. Use the Explorer tool to build the UF2 and copy extra ROMs and MP3 files to the microSD card. See the Explorer manual for limits (flash vs SD capacity, 256 KB SD ROM limit, and supported formats).
 
