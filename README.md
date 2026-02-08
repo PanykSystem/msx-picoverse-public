@@ -12,7 +12,8 @@ PicoVerse is designed as an open-source, independent, and documented MSX cartrid
 
 ## Whats New in PicoVerse?
 
-- New LoadROM tool for 2040 based on PIO, which allows more reliable ROM loading and better support for edge cases. ***(NEW!)***
+- New PIO based **LoadROM** firmware for PicoVerse 2040, which allows more reliable ROM loading and better support for edge cases. ***(NEW!)***
+- New PIO based **MultiROM** firmware for PicoVerse 2040 that improves bus timing and stability. ***(NEW!)***
 - New Explorer firmware for 2350 that merges flash and microSD ROMs into a single menu with source labels, search, and MP3 playback. ***(NEW!)***
 - New hardware revision for 2350 with microSD slot, ESP8266 header, and I2S DAC. BOM and Gerbers available. ***(NEW!)***
 - Updated documentation with detailed guides for the new tools and features. ***(NEW!)***
