@@ -1,153 +1,260 @@
 # MSX PicoVerse RP2040 LoadROM PIO Bus Engine
 
 ## Overview
-This document explains the PIO-based bus engine that replaces the bit-banged MSX bus handling for the 2040 loadrom.pio target. The goal is to provide deterministic timing for /RD and /WR cycles, reduce CPU overhead, and make data output timing more consistent across MSX clock variations.
 
-The approach used here is a split responsibility model:
+This document describes the PIO-based bus engine used by the `loadrom.pio` firmware target for the RP2040-based MSX PicoVerse cartridge. It replaces the earlier bit-banging approach with RP2040 PIO (Programmable I/O) state machines, achieving deterministic bus timing and freeing the CPU to focus on ROM lookup and mapper logic.
 
-- PIO owns the bus timing (detect /SLTSL, /RD, /WR), controls WAIT and BUSSDIR, and captures the address/data bus snapshot.
-- The CPU services PIO FIFOs, translates the address into a ROM byte, and writes the data back to the PIO TX FIFO.
+**Split-responsibility model:**
 
-This version migrates the plain ROM handlers (32KB and linear 48KB) and all mapper handlers (Konami, Konami SCC, ASCII8, ASCII16, NEO8, NEO16) to PIO. All read and mapper write cycles are now serviced through the PIO FIFOs.
+| Owner | Responsibility |
+|-------|---------------|
+| PIO   | Detect /SLTSL + /RD or /WR, assert /WAIT, capture address/data, drive data bus, release /WAIT |
+| CPU   | Service PIO FIFOs, translate addresses through mapper bank registers, push ROM bytes back |
 
-## Files and Targets
+All ROM types — plain (16/32 KB), linear 48 KB, and all banked mappers (Konami, Konami SCC, ASCII8, ASCII16, NEO8, NEO16) — are serviced through the PIO FIFOs.
 
-- PIO program: 2040/software/loadrom.pio/pico/loadrom/loadrom_bus.pio
-- C integration: 2040/software/loadrom.pio/pico/loadrom/loadrom.c
-- Build integration: 2040/software/loadrom.pio/pico/loadrom/CMakeLists.txt
+## Source Files
 
-The build now generates a PIO header for the program and links hardware_pio so the code can configure and run the state machines.
+| File | Purpose |
+|------|---------|
+| `2040/software/loadrom.pio/pico/loadrom/msx_bus.pio` | PIO assembly — read responder and write captor state machines |
+| `2040/software/loadrom.pio/pico/loadrom/loadrom.c` | C firmware — PIO init, ROM cache, mapper handlers, main loop |
+| `2040/software/loadrom.pio/pico/loadrom/loadrom.h` | Pin definitions, ROM record layout, SRAM cache declaration |
+| `2040/software/loadrom.pio/pico/loadrom/CMakeLists.txt` | Build config — generates PIO header, links `hardware_pio` |
+| `2040/software/loadrom.pio/Makefile` | Top-level build — firmware + PC tool |
 
-## Pin Map and Signals
+## Pin Map
 
-The pin layout is unchanged and matches loadrom.h:
+The GPIO mapping is defined in `loadrom.h` and is shared between the PIO programs and the C code:
 
-- Address bus: GPIO 0-15 (A0-A15)
-- Data bus: GPIO 16-23 (D0-D7)
-- Control: /RD 24, /WR 25, /IORQ 26, /SLTSL 27
-- WAIT: GPIO 28
-- BUSSDIR: GPIO 29
+| GPIO | Signal | Direction | Notes |
+|------|--------|-----------|-------|
+| 0–15 | A0–A15 | Input | Address bus, always input |
+| 16–23 | D0–D7 | Bidirectional | Data bus, driven by PIO `out pins` / `out pindirs` |
+| 24 | /RD | Input | Active-low read strobe, used as `jmp pin` in SM0 |
+| 25 | /WR | Input | Active-low write strobe, used as `jmp pin` in SM1 |
+| 26 | /IORQ | Input | Active-low I/O request (monitored but not used by PIO) |
+| 27 | /SLTSL | Input | Active-low slot select, used by PIO `wait` instruction |
+| 28 | /WAIT | Output | Active-low, driven by PIO side-set |
+| 29 | BUSSDIR | Input | Bus direction (directly active) |
 
-PIO is configured to read the full 32-bit GPIO snapshot, so address and data are captured at the same time. Data output is only driven when /RD is asserted and after the CPU provides the response byte via the TX FIFO.
+## MSX Z80 Bus Timing
 
-## High-Level Flow
+The Z80 runs at 3.58 MHz (T-cycle ≈ 279 ns). A memory read cycle looks like:
 
-1. PIO waits for the slot to be selected (/SLTSL low).
-2. On /RD low, PIO samples the GPIO pins and pushes the full 32-bit snapshot into the RX FIFO.
-3. PIO asserts WAIT low to stall the MSX until data is ready.
-4. CPU reads the RX FIFO, decodes the address, fetches a ROM byte, and writes it to the PIO TX FIFO.
-5. PIO pulls the byte, drives it onto the data bus, deasserts WAIT, and waits for /RD to return high.
-6. PIO releases the data bus; if /SLTSL remains low it immediately accepts the next /RD, otherwise it waits for the next slot select.
+```
+T1: MSX places address on bus; /SLTSL goes low
+T2: /RD goes low — cartridge must start responding
+T3: CPU samples the data bus (data must be valid)
+T4: /RD and /SLTSL go high; cartridge releases bus
+```
 
-For /WR cycles, a second SM (msx_wr) captures a GPIO snapshot and pushes it to its RX FIFO. Mapper handlers consume those events to update bank registers.
+Budget from /RD falling to data valid ≈ 279 ns (one T-cycle). This firmware uses /WAIT to stretch the cycle, giving the Pico CPU time to look up data in SRAM and feed it back through the TX FIFO.
 
-## PIO Programs
+## PIO Architecture
 
-The PIO source is in loadrom_bus.pio and defines two programs:
+Two PIO state machines run on `pio0`, both clocked at the full system clock (250 MHz, 4 ns per instruction):
 
-- msx_rd: Read cycle engine with side-set control for WAIT and BUSSDIR.
-- msx_wr: Write cycle capture engine.
+| SM | Program | Role |
+|----|---------|------|
+| SM0 | `msx_read_responder` | Memory read cycles — captures address, drives data, controls /WAIT |
+| SM1 | `msx_write_captor` | Memory write cycles — captures address + data for bank switching |
 
-### msx_rd logic summary
+### msx_read_responder (SM0)
 
-- Wait for /SLTSL low and /RD low.
-- Sample 32 GPIO pins into ISR and push to RX FIFO.
-- Assert WAIT low (stall).
-- Pull one byte from TX FIFO.
-- Drive the data bus with that byte, set BUSSDIR to output, then deassert WAIT.
-- Wait for /RD high, then release the data bus; if /SLTSL stays low, continue servicing reads without a full re-arm.
+**Features:** side-set on /WAIT (1 pin), `jmp pin` on /RD, 13 instructions.
 
-Side-set is used to control WAIT and BUSSDIR in a deterministic way. The code expects WAIT to be active-low and BUSSDIR active-high for output enable. The SLTSL jmp pin allows the PIO to keep servicing read bursts without waiting for a full deassert of /SLTSL.
+**Flow:**
 
-### msx_wr logic summary
+```
+ wait_sltsl:                                         
+   wait 0 gpio 27    side 1    ; /SLTSL=0? (/WAIT=1) 
+   jmp pin wait_sltsl side 1   ; /RD=1? re-check     
+   nop               side 0    ; Assert /WAIT=0      
+   in pins, 16       side 0    ; Capture A0..A15       
+   push block        side 0    ; → RX FIFO (to CPU)    
+   pull block        side 0    ; ← TX FIFO (from CPU)  
+   out pins, 8       side 0    ; Drive D0..D7           
+   out pindirs, 8    side 0    ; Enable outputs         
+   nop               side 1 [1]; Release /WAIT (+hold)  
+   wait 1 gpio 24    side 1    ; Wait /RD=1             
+   set x, 0          side 1    ; Prepare zero           
+   mov osr, x        side 1    ; Load into OSR          
+   out pindirs, 8    side 1    ; Tri-state D0..D7       
+   (wrap to wait_sltsl)                                 
+```
 
-- Wait for /SLTSL low and /WR low.
-- Sample 32 GPIO pins into ISR and push to RX FIFO.
-- Wait for /WR high and /SLTSL high.
+**Key design decisions:**
 
-This keeps the CPU aware of write cycles while the PIO handles timing and sampling.
+1. **`jmp pin` polling instead of double `wait`:** The original design used two sequential `wait` instructions (`wait 0 gpio 27` then `wait 0 gpio 24`). This had a race condition: during a write cycle to our slot, SM0 would pass the /SLTSL wait, stay blocked at `/RD` wait, and then respond to an unrelated `/RD` assertion after `/SLTSL` went high — causing bus contention. The `jmp pin` approach re-checks `/SLTSL` on every iteration, ensuring both signals are simultaneously active before proceeding.
 
-## FIFO Data Format
+2. **Side-set for /WAIT:** /WAIT is asserted in the same instruction that follows the `jmp pin` fall-through, giving deterministic timing. The Z80 is frozen before any FIFO stall can cause data-bus glitches.
 
-Both state machines push a full 32-bit GPIO snapshot. The layout is:
+3. **Token format:** The CPU pushes a 16-bit token to the TX FIFO:
+   - bits [7:0] = data byte for D0..D7
+   - bits [15:8] = pindirs mask (0xFF = drive bus, 0x00 = tri-state)
 
-- Bits 0-15: Address bus A0-A15
-- Bits 16-23: Data bus D0-D7
-- Bits 24-27: /RD, /WR, /IORQ, /SLTSL
-- Bits 28-29: WAIT, BUSSDIR
-- Bits 30-31: Unused
+4. **Tri-state cleanup:** After /RD goes high, the SM uses `set x, 0` → `mov osr, x` → `out pindirs, 8` to tri-state the data bus, ensuring clean release.
 
-In the current implementation the CPU reads the lower 16 bits for the address and, for mapper writes, the 8-bit data field. Mapper handlers use the data byte and the write address to update bank registers.
+### msx_write_captor (SM1)
 
-## C Integration Details
+**Features:** no side-set, `jmp pin` on /WR, FIFO joined RX (8-deep), 6 instructions.
 
-The integration is in loadrom.c and uses two state machines on PIO0:
+**Flow:**
 
-- SM0 runs msx_rd
-- SM1 runs msx_wr
+```
+ wait_sltsl:                                          
+   wait 0 gpio 27            ; /SLTSL=0?              
+   jmp pin wait_sltsl         ; /WR=1? re-check       
+   nop              [2]      ; 3 cycles settle time   
+   mov isr, pins             ; Snapshot all GPIOs      
+   push block                ; → RX FIFO (to CPU)     
+   wait 1 gpio 25            ; Wait /WR=1             
+   (wrap to wait_sltsl)                                
+```
 
-Key integration points:
+**RX FIFO word format:**
+- bits [15:0] = A0..A15 (write address)
+- bits [23:16] = D0..D7 (write data)
+- bits [24+] = control pins (ignored)
 
-- bus_pio_configure_pins sets all bus pins to GPIO_FUNC_PIO0.
-- bus_pio_init adds the PIO programs, configures pin mappings, shifts, and enables the SMs.
-- loadrom_plain32, loadrom_linear48, and all mapper handlers now call bus_pio_init once and then loop on PIO FIFOs instead of polling GPIO.
+The same `jmp pin` race-condition fix applies here: the SM re-checks `/SLTSL` while waiting for `/WR`, preventing false captures from unrelated bus activity.
 
-The read/write loop is:
+## C Integration
 
-- Drain msx_wr RX FIFO and apply any mapper write updates
-- Pull msx_rd RX FIFO samples, decode address, fetch ROM byte
-- Push the byte to msx_rd TX FIFO
+### PIO Initialization (`msx_pio_bus_init`)
 
-This preserves the ROM address logic and cache behavior while delegating bus timing to PIO.
+1. Load both PIO programs into `pio0` instruction memory
+2. Configure SM0 (read responder):
+   - `in_base` = GPIO 0 (A0), shift left, 16 bits
+   - `out_base` = GPIO 16 (D0), 8 pins, shift right (LSB first)
+   - `sideset_pin` = GPIO 28 (/WAIT)
+   - `jmp_pin` = GPIO 24 (/RD)
+   - Clock divider = 1.0 (full 250 MHz)
+3. Configure SM1 (write captor):
+   - `in_base` = GPIO 0 (A0), shift left, 32 bits
+   - `jmp_pin` = GPIO 25 (/WR)
+   - FIFO joined RX for 8-deep buffering
+   - Clock divider = 1.0
+4. Hand data bus pins (GPIO 16–23) to PIO, initially tri-stated
+5. /WAIT pin driven by PIO, initially deasserted (high)
+6. Enable both state machines
 
-## WAIT and BUSSDIR Behavior
+### FIFO Data Flow
 
-WAIT and BUSSDIR are controlled in the PIO side-set of msx_rd:
+**Read path (per bus cycle):**
 
-- WAIT is driven low immediately after capturing the read cycle, stalling the bus.
-- WAIT is driven high right after the ROM byte is placed on the data bus.
-- BUSSDIR is driven high only while the data bus is driven by the Pico.
+```
+  SM0 pushes address (16-bit) → CPU reads RX FIFO
+  CPU looks up ROM byte, builds token → pushes to TX FIFO
+  SM0 pulls token → drives data bus, releases /WAIT
+```
 
-If your external bus transceiver uses inverted BUSSDIR polarity, the side-set constants in the PIO program should be flipped accordingly.
+**Write path (bank switching):**
 
-## Cache and Flash Reads
+```
+  SM1 pushes snapshot (24-bit) → CPU drains RX FIFO
+  CPU extracts address + data → updates bank registers
+```
 
-The CPU still owns ROM data retrieval and caching:
+### Token Helpers
 
-- When cache is enabled, rom_sram is filled and reads are served from SRAM.
-- If cache is disabled or out of range, reads are served from flash.
+| Function | Purpose |
+|----------|---------|
+| `read_rom_byte(rom_base, rel)` | Read ROM byte — serves from SRAM cache if `rel < rom_cached_size`, falls back to flash XIP otherwise |
+| `pio_build_token(drive, data)` | Build 16-bit token: data byte + pindirs mask |
+| `pio_try_get_write(addr, data)` | Non-blocking read from write captor FIFO |
+| `pio_drain_writes(handler, ctx)` | Drain all pending writes, invoke handler per event |
 
-This is unchanged from the prior bit-banging logic. The only difference is that WAIT is asserted by PIO instead of the CPU.
+### ROM Cache (`prepare_rom_source`)
 
-## Build Notes
+When cache is enabled, the ROM data is copied from flash into `rom_sram[]` (192 KB SRAM buffer) for faster read access. During the copy, /WAIT is held low to prevent the MSX from reading stale data.
 
-The loadrom.pio target now uses:
+**Small ROMs (≤ 192 KB):** The entire ROM fits in cache. `rom_base` is redirected to SRAM and all reads come from fast SRAM. This is the path used by plain 16/32 KB, linear 48 KB, and smaller banked ROMs.
 
-- pico_generate_pio_header to emit loadrom_bus.pio.h
-- hardware_pio to access PIO APIs
+**Large ROMs (> 192 KB):** The first 192 KB is cached in SRAM, but `rom_base` stays pointing to flash and `available_length` retains the full ROM size. The `read_rom_byte()` helper transparently serves from SRAM for offsets within the cached region (the most commonly accessed initial banks) and falls back to flash XIP for higher offsets. This ensures all bank data is accessible — previously, ROMs larger than 192 KB were silently truncated.
 
-This is configured in CMakeLists.txt under loadrom.pio.
+Flash XIP reads at 250 MHz system clock with the default CLKDIV=4 give a 62.5 MHz flash clock (within spec for W25Q series in QSPI mode). Each XIP cache miss costs approximately 700 ns (~2–3 Z80 wait states), which is acceptable since /WAIT holds the Z80 during the lookup.
 
-## Mapper Handling via PIO
+## Mapper Implementations
 
-The FIFO approach now supports mapper handlers:
+### Plain ROMs (no mapper)
 
-1. Consume msx_wr FIFO events.
-2. Extract address (bits 0-15) and data (bits 16-23).
-3. Update the mapper bank registers according to the mapper rules.
-4. Continue serving read cycles from msx_rd FIFO as done for plain/linear ROMs.
+**`loadrom_plain32`** — 16 KB or 32 KB ROM at 0x4000–0xBFFF. Pure address-to-data lookup, no write handling.
 
-## Known Limitations and Considerations
+**`loadrom_linear48`** — 48 KB ROM at 0x0000–0xBFFF. Three pages, no bank switching.
 
-- The PIO program assumes /SLTSL and /RD are properly synchronized to the MSX bus. If the bus is excessively noisy, extra filtering or sync logic may be needed.
-- Read bursts are supported while /SLTSL remains asserted; this was required to make linear ROMs stable when the slot stays selected across sequential reads.
-- PIO0 uses SM0 and SM1. If other PIO use is needed, adjust SM indices or move to PIO1.
-- The current implementation uses a full 32-bit snapshot per cycle. If FIFO pressure becomes an issue, the PIO program can be modified to push only 16 bits and read control pins separately.
+### Banked Mappers — Generic Loop (`banked8_loop`)
 
-## Summary
+All 8 KB-banked mappers (Konami SCC, Konami, ASCII8) use `banked8_loop`, which:
 
-This PIO approach replaces the timing-critical bit-banged loops with deterministic state machines and exposes a clean FIFO interface to the CPU. The result is more stable read timing and a clear path to future mapper migration while keeping the existing ROM address logic intact.
+1. Drains pending writes from SM1 and invokes the mapper's write handler
+2. Blocks on SM0 RX FIFO for the next read address
+3. Drains any writes that arrived during the blocking wait
+4. Translates the address through bank registers: `offset = bank_regs[(addr - 0x4000) >> 13] * 0x2000 + (addr & 0x1FFF)`
+5. Pushes the ROM byte (or 0xFF if out of range) back to SM0
 
+### Mapper Details
 
-Cristiano Goncalves
-02/07/26
+| Type ID | Mapper | Bank Size | Address Window | Switch Registers |
+|---------|--------|-----------|----------------|-----------------|
+| 1, 2 | Plain 16/32 KB | — | 0x4000–0xBFFF | None |
+| 3 | Konami SCC | 8 KB | 0x4000–0xBFFF | 0x5000, 0x7000, 0x9000, 0xB000 |
+| 4 | Linear 48 KB | — | 0x0000–0xBFFF | None |
+| 5 | ASCII8 | 8 KB | 0x4000–0xBFFF | 0x6000, 0x6800, 0x7000, 0x7800 |
+| 6 | ASCII16 | 16 KB | 0x4000–0xBFFF | 0x6000, 0x7000 |
+| 7 | Konami | 8 KB | 0x4000–0xBFFF | Bank 0 fixed; 0x6000, 0x8000, 0xA000 |
+| 8 | NEO8 | 8 KB | 0x0000–0xBFFF | 6 banks, 16-bit registers, 12-bit segment addressing |
+| 9 | NEO16 | 16 KB | 0x0000–0xBFFF | 3 banks, 16-bit registers, 12-bit segment addressing |
+
+### ASCII16
+
+Uses its own loop instead of `banked8_loop` because address translation uses 16 KB banks:  
+`offset = bank_regs[addr >> 15 & 1] << 14 + (addr & 0x3FFF)`
+
+### NEO8 / NEO16
+
+Use 16-bit bank registers with 12-bit segment addressing, covering the full 0x0000–0xBFFF range. Each register is written byte-by-byte (low/high) through mirrored address ranges. Cache is disabled for NEO mappers (`cache_enable = false`) since ROM images commonly exceed the 192 KB SRAM cache; all reads go through flash XIP. The `read_rom_byte()` helper is still used for consistency (with `rom_cached_size = 0`, it always reads from flash).
+
+## Build Configuration
+
+**CMakeLists.txt** uses:
+- `pico_generate_pio_header(loadrom ${CMAKE_CURRENT_LIST_DIR}/msx_bus.pio)` to compile the PIO assembly into `msx_bus.pio.h`
+- `hardware_pio` linked alongside `pico_stdlib`
+- UART and USB stdio disabled (no serial output in production)
+- Post-build copies `loadrom.bin` to `dist/` for the PC tool
+
+**Makefile** builds:
+- `firmware` target — runs CMake/Ninja for the Pico firmware
+- `tool` target — builds the PC-side tool that packages ROM images with the firmware binary
+
+## System Clock
+
+The RP2040 is clocked at 250 MHz (`set_sys_clock_khz(250000, true)`), giving:
+- 4 ns per PIO instruction
+- The `jmp pin` polling loop runs at 2 instructions per iteration (8 ns), transparent to the bus
+- Plenty of headroom for CPU-side ROM lookup and FIFO servicing
+
+## ROM Binary Format
+
+The ROM image is concatenated after the program binary in flash. The record header is:
+
+| Offset | Size | Field |
+|--------|------|-------|
+| 0 | 50 bytes | ROM name (null-padded) |
+| 50 | 1 byte | Mapper type (1–9) |
+| 51 | 4 bytes | ROM size (little-endian uint32) |
+| 55 | 4 bytes | ROM offset (little-endian uint32) |
+
+ROM data follows immediately after the header.
+
+## Known Limitations
+
+- PIO0 uses SM0 and SM1. If other PIO usage is needed, adjust SM indices or use PIO1.
+- The SRAM cache is 192 KB. ROMs larger than this use a hybrid approach: the first 192 KB is served from fast SRAM while higher banks fall back to flash XIP (~700 ns per cache miss, 2–3 extra Z80 wait states). NEO mappers skip caching entirely and serve all data from flash.
+- The `jmp pin` polling loop introduces a worst-case 8 ns (2 PIO cycles) latency between /SLTSL and /RD going low simultaneously and the SM detecting it. This is negligible at 3.58 MHz.
+
+---
+
+Cristiano Goncalves  
+02/14/26

@@ -1,0 +1,132 @@
+; MSX PICOVERSE PROJECT
+; (c) 2026 Cristiano Goncalves
+; The Retro Hacker
+;
+; msx_bus.pio - PIO programs for MSX bus interface
+;
+; This work is licensed under a "Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International
+; License". https://creativecommons.org/licenses/by-nc-sa/4.0/
+;
+; -----------------------------------------------------------------------
+; Pin mapping (directly from loadrom.h):
+;   GPIO  0-15  = A0..A15   (address bus, always input)
+;   GPIO 16-23  = D0..D7    (data bus, bidirectional)
+;   GPIO 24     = /RD       (active-low read strobe)
+;   GPIO 25     = /WR       (active-low write strobe)
+;   GPIO 26     = /IORQ     (active-low I/O request)
+;   GPIO 27     = /SLTSL    (active-low slot select)
+;   GPIO 28     = /WAIT     (active-low, directly driven by PIO side-set)
+;   GPIO 29     = BUSSDIR
+;
+; -----------------------------------------------------------------------
+; MSX Z80 memory read timing (3.58 MHz, T-cycle = ~279 ns):
+;
+;   T1: Address placed, /SLTSL goes low, /RD still high
+;   T2: /RD goes low  ->  cartridge must start responding
+;   T3: CPU samples data bus (data must be valid at start of T3)
+;   T4: /RD, /SLTSL go high; cartridge releases bus
+;
+;   Budget from /RD falling to data valid: ~279 ns (one T-cycle)
+;   BUT: we use /WAIT to stretch the bus cycle, giving the CPU time
+;   to look up data in SRAM and feed it back through the TX FIFO.
+;
+; -----------------------------------------------------------------------
+; Architecture:
+;
+;   SM0 = msx_read_responder   (handles memory reads)
+;   SM1 = msx_write_captor     (handles memory writes / bank switching)
+;
+;   Read flow:
+;     1. PIO waits for /SLTSL=0 then /RD=0
+;     2. PIO immediately asserts /WAIT=0 (side-set) to freeze the Z80
+;     3. PIO captures A0..A15 and pushes the 16-bit address to the RX FIFO
+;     4. PIO stalls on pull (waiting for CPU to push data token to TX FIFO)
+;     5. CPU receives address, looks up data in SRAM, pushes 16-bit token:
+;          bits[7:0]  = data byte for D0..D7
+;          bits[15:8] = pindirs mask (0xFF = drive, 0x00 = tri-state)
+;     6. PIO loads data onto output pins and configures pindirs
+;     7. PIO releases /WAIT=1 (side-set) with data valid on bus
+;     8. PIO waits for /RD to go high (end of bus cycle)
+;     9. PIO tri-states D0..D7 (writes 0x00 to pindirs)
+;    10. Loop back
+;
+;   Write flow:
+;     1. PIO waits for /SLTSL=0 then /WR=0
+;     2. PIO settles, then samples all GPIO 0..23 (A0..A15 + D0..D7)
+;     3. PIO pushes the 24-bit snapshot to the RX FIFO
+;     4. PIO waits for /WR release and loops
+;     5. CPU drains write FIFO and updates bank registers
+;
+; -----------------------------------------------------------------------
+
+; ===================================================================
+; msx_read_responder
+; ===================================================================
+; Side-set: 1 pin = /WAIT (active-low), directly wired to MSX /WAIT.
+;   side 1 = /WAIT deasserted (Z80 runs)
+;   side 0 = /WAIT asserted   (Z80 frozen)
+;
+; in_base     = GPIO 0  (A0), 16 pins
+; out_base    = GPIO 16 (D0), 8 pins
+; sideset_pin = GPIO 28 (/WAIT)
+;
+; Autopush/autopull disabled. Shift directions set from C.
+
+.program msx_read_responder
+.side_set 1 opt
+
+; jmp_pin must be configured to /RD (GPIO 24) from C code.
+; jmp pin jumps when the pin is HIGH (1). /RD is active-low:
+;   /RD=1 (inactive) → jump taken  → re-check /SLTSL
+;   /RD=0 (active)   → fall through → handle the read
+;
+; This replaces the previous two sequential "wait" instructions which
+; had a race condition: after a write to our slot, SM0 would pass the
+; /SLTSL wait but then respond to an unrelated /RD assertion.
+
+.wrap_target
+wait_sltsl:
+    wait 0 gpio 27     side 1     ; Wait for /SLTSL=0 (slot selected). /WAIT released.
+    jmp pin wait_sltsl  side 1     ; If /RD=1 (no read), re-check /SLTSL
+    nop                side 0     ; Assert /WAIT=0 immediately to freeze Z80
+    in pins, 16        side 0     ; Capture A0..A15 into ISR
+    push block         side 0     ; Send address to CPU via RX FIFO
+    pull block         side 0     ; Wait for CPU response in TX FIFO (data token)
+    out pins, 8        side 0     ; Drive D0..D7 with data byte
+    out pindirs, 8     side 0     ; Set pindirs (0xFF=output, 0x00=tristate)
+    nop                side 1 [1] ; Release /WAIT=1; data is now valid. 2-cycle hold.
+    wait 1 gpio 24     side 1     ; Wait for /RD=1 (bus cycle ends)
+    set x, 0           side 1     ; Prepare zero for tri-state
+    mov osr, x         side 1     ; Load zero into OSR
+    out pindirs, 8     side 1     ; Tri-state D0..D7 (pindirs=0x00)
+.wrap
+
+; ===================================================================
+; msx_write_captor
+; ===================================================================
+; Captures address + data during MSX write cycles.
+; Uses mov isr, pins to grab all GPIO state (bits 0..23 = A0..A15 + D0..D7).
+;
+; RX FIFO word format:
+;   bits[15:0]  = A0..A15
+;   bits[23:16] = D0..D7
+;
+; No side-set, no out pins needed.
+; FIFO join RX for deep buffering (8 entries).
+
+.program msx_write_captor
+
+; jmp_pin must be configured to /WR (GPIO 25) from C code.
+; Same polling pattern as the read responder to avoid the same race:
+;   /WR=1 (inactive) → jump taken  → re-check /SLTSL
+;   /WR=0 (active)   → fall through → capture the write
+
+.wrap_target
+wait_sltsl:
+    wait 0 gpio 27           ; Wait for /SLTSL=0 (slot selected)
+    jmp pin wait_sltsl        ; If /WR=1 (no write), re-check /SLTSL
+    nop              [2]     ; Let address + data settle (3 cycles)
+    mov isr, pins            ; Snapshot all GPIOs into ISR
+    push block               ; Send (addr+data) to CPU via RX FIFO
+    wait 1 gpio 25           ; Wait for /WR=1 (write cycle ends)
+.wrap

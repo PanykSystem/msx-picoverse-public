@@ -51,7 +51,7 @@ pico_sdk_init()
 
 add_executable(loadrom loadrom.c )
 
-pico_generate_pio_header(loadrom ${CMAKE_CURRENT_LIST_DIR}/loadrom_bus.pio)
+pico_generate_pio_header(loadrom ${CMAKE_CURRENT_LIST_DIR}/msx_bus.pio)
 
 pico_set_program_name(loadrom "loadrom")
 pico_set_program_version(loadrom "1.0")
@@ -62,9 +62,9 @@ pico_enable_stdio_usb(loadrom 0)
 
 # Add the standard library to the build
 target_link_libraries(loadrom
-    pico_stdlib
-    hardware_pio
-    hardware_dma)
+        pico_stdlib
+        hardware_dma
+        hardware_pio)
 
 # Add the standard include files to the build
 target_include_directories(loadrom PRIVATE

@@ -1,28 +1,28 @@
 // MSX PICOVERSE PROJECT
-// (c) 202 Cristiano Goncalves
+// (c) 2026 Cristiano Goncalves
 // The Retro Hacker
 //
-// loadrom.h - Simple ROM loader for MSX PICOVERSE project - v1.0
+// loadrom.h - Pin definitions and constants for MSX PICOVERSE PIO-based ROM loader - v2.0
 //
-// This is  small test program that demonstrates how to load simple ROM images using the MSX PICOVERSE project. 
-// You need to concatenate the ROM image to the  end of this program binary in order  to load it.
-// The program will then act as a simple ROM cartridge that responds to memory read requests from the MSX.
-// 
-// This work is licensed  under a "Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International
+// Defines GPIO pin assignments, ROM record layout, and SRAM cache for the RP2040
+// PIO-based MSX bus engine. The ROM image is concatenated after the program binary
+// in flash; at runtime it is optionally copied into SRAM for faster access.
+//
+// This work is licensed under a "Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International
 // License". https://creativecommons.org/licenses/by-nc-sa/4.0/
 
 #ifndef LOADROM_H
 #define LOADROM_H
 
-#define ROM_NAME_MAX    50   // Maximum size of the ROM name
-#define ROM_RECORD_SIZE (ROM_NAME_MAX + 1 + (sizeof(uint32_t) * 2)) // Name + mapper + size + offset
-#define CACHE_SIZE      196608     // 192KB cache size for ROM data
+#define ROM_NAME_MAX    50       // Maximum length of the ROM name string
+#define ROM_RECORD_SIZE (ROM_NAME_MAX + 1 + (sizeof(uint32_t) * 2)) // Name + mapper type + size + offset
+#define CACHE_SIZE      196608   // 192 KB SRAM cache for ROM data
 #define PICO_FLASH_SPI_CLKDIV 2
 
-// -----------------------
-// User-defined pin assignments for the Raspberry Pi Pico
-// -----------------------
-// Address lines (A0-A15) as inputs from MSX
+// -----------------------------------------------------------------------
+// GPIO pin assignments (directly mapped to MSX bus signals)
+// -----------------------------------------------------------------------
+// Address lines (A0-A15) — directly readable by PIO via "in pins"
 #define PIN_A0     0 
 #define PIN_A1     1
 #define PIN_A2     2
@@ -40,7 +40,7 @@
 #define PIN_A14    14
 #define PIN_A15    15
 
-// Data lines (D0-D7)
+// Data lines (D0-D7) — bidirectional, driven by PIO "out pins" / "out pindirs"
 #define PIN_D0     16
 #define PIN_D1     17
 #define PIN_D2     18
@@ -50,24 +50,27 @@
 #define PIN_D6     22
 #define PIN_D7     23
 
-// Control signals
-#define PIN_RD     24   // Read strobe from MSX
-#define PIN_WR     25   // Write strobe from MSX
-#define PIN_IORQ   26   // IO Request line from MSX
-#define PIN_SLTSL  27   // Slot Select for this cartridge slot
-#define PIN_WAIT    28  // WAIT line to MSX 
-#define PIN_BUSSDIR 29  // Bus direction line 
+// Control signals (directly monitored by PIO via wait/jmp pin instructions)
+#define PIN_RD     24   // /RD  — active-low read strobe
+#define PIN_WR     25   // /WR  — active-low write strobe
+#define PIN_IORQ   26   // /IORQ — active-low I/O request
+#define PIN_SLTSL  27   // /SLTSL — active-low slot select
+#define PIN_WAIT    28  // /WAIT — active-low, driven by PIO side-set
+#define PIN_BUSSDIR 29  // BUSSDIR — bus direction control
 
-// This symbol marks the end of the main program in flash.
-// The ROM data is concatenated immediately after this point.
+// -----------------------------------------------------------------------
+// ROM storage
+// -----------------------------------------------------------------------
+
+// Linker symbol marking the end of the program binary in flash.
+// The ROM image is concatenated immediately after this address.
 extern unsigned char __flash_binary_end;
 
-// Optionally copy the ROM into this SRAM buffer for faster access
+// SRAM cache — ROM data is optionally copied here for faster access
 static uint8_t rom_sram[CACHE_SIZE];
 static uint32_t active_rom_size = 0;
 
-// The ROM is concatenated right after the main program binary.
-// __flash_binary_end points to the end of the program in flash memory.
+// Pointer to the ROM data in flash (right after the program binary)
 const uint8_t *rom = (const uint8_t *)&__flash_binary_end;
 
 #endif

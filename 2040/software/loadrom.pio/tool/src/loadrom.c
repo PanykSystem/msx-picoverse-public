@@ -1,5 +1,5 @@
 // MSX PICOVERSE PROJECT
-// (c) 2025 Cristiano Goncalves
+// (c) 2026 Cristiano Goncalves
 // The Retro Hacker
 //
 // loadrom.c - Windows console application to create a loadrom UF2 file for the MSX PICOVERSE 2040
@@ -20,6 +20,7 @@
 #include <stdio.h>
 #include <stdint.h>
 #include <stdlib.h>
+#include <dirent.h>
 #include <string.h>
 #include <ctype.h>
 #include "uf2format.h"
@@ -43,6 +44,7 @@
 
 uint32_t file_size(const char *filename);
 uint8_t detect_rom_type(const char *filename, uint32_t size);
+void write_padding(FILE *file, size_t current_size, size_t target_size, uint8_t padding_byte);
 void create_uf2_file(const char *rom_filename, uint32_t rom_size, uint8_t rom_type,
                      const char *rom_name, uint32_t base_offset, const char *uf2_filename);
 
@@ -101,6 +103,13 @@ uint32_t file_size(const char *filename) {
     return size;
 }
 
+// Return a textual description of the mapper type given its number.
+const char* mapper_description(int number) {
+    if (number <= 0 || (size_t)number > MAPPER_DESCRIPTION_COUNT) {
+        return "Unknown";
+    }
+    return MAPPER_DESCRIPTIONS[number - 1];
+}
 
 // Attempt to guess the mapper type from the ROM contents.
 // Returns the mapper byte expected by the firmware (0 signals unsupported/unknown).
