@@ -12,9 +12,10 @@
 #define MP3_I2S_DATA_PIN 29
 #define MP3_I2S_BCLK_PIN 30
 #define MP3_I2S_WSEL_PIN 31
-#define MP3_I2S_MUTE_PIN 32
+#define MP3_I2S_MUTE_PIN 37
 
-#define MP3_BUFFER_FALLBACK 32768
+#define MP3_BUFFER_FALLBACK 65536
+#define MP3_READ_ERROR_LIMIT 8
 #define MP3_I2S_BUFFER_SAMPLES 1152
 #define MP3_MIN_BUFFER_SIZE 2048
 #define MP3_MAX_SAMPLES_PER_CH 1152
@@ -25,6 +26,13 @@
 #define ESTIMATE_BITRATE_KBPS 128
 
 static struct audio_buffer_pool *audio_pool;
+static struct audio_i2s_config i2s_config = {
+    .data_pin = MP3_I2S_DATA_PIN,
+    .clock_pin_base = MP3_I2S_BCLK_PIN,
+    .dma_channel = 0,
+    .pio_sm = 0,
+};
+static bool i2s_ready = false;
 static audio_format_t audio_format = {
     .sample_freq = DEFAULT_SAMPLE_RATE,
     .format = AUDIO_BUFFER_FORMAT_PCM_S16,
@@ -53,6 +61,7 @@ static HMP3Decoder mp3_decoder = NULL;
 
 static uint32_t mp3_file_size = 0;
 static uint32_t mp3_bytes_read = 0;
+static uint8_t mp3_read_errors = 0;
 
 static uint32_t sample_rate = DEFAULT_SAMPLE_RATE;
 static uint64_t elapsed_samples = 0;
@@ -77,6 +86,24 @@ void mp3_set_external_buffer(uint8_t *buffer, size_t size) {
 }
 
 static int mp3_dma_channel = -1;
+
+static bool i2s_start(void) {
+    const struct audio_format *output_format = audio_i2s_setup(&audio_format, &i2s_config);
+    if (!output_format || !audio_i2s_connect(audio_pool)) {
+        return false;
+    }
+    audio_i2s_set_enabled(true);
+    i2s_ready = true;
+    return true;
+}
+
+static void i2s_stop(void) {
+    if (!i2s_ready) {
+        return;
+    }
+    audio_i2s_set_enabled(false);
+    i2s_ready = false;
+}
 
 static void update_status_flags(void) {
     uint8_t flags = 0;
@@ -108,6 +135,7 @@ static void reset_decoder_state(void) {
     mp3_buf_used = 0;
     mp3_buf_pos = 0;
     mp3_bytes_read = 0;
+    mp3_read_errors = 0;
     elapsed_samples = 0;
     elapsed_seconds = 0;
     total_seconds = 0;
@@ -143,10 +171,17 @@ static void fill_buffer_if_needed(void) {
             mp3_buf_used += br;
             mp3_bytes_read += br;
             status_flags |= MP3_STATUS_READING;
+            mp3_read_errors = 0;
+            if (error_flag) {
+                error_flag = false;
+            }
         } else {
             eof = true;
         }
     } else {
+        if (++mp3_read_errors < MP3_READ_ERROR_LIMIT) {
+            return;
+        }
         error_flag = true;
         eof = true;
     }
@@ -237,7 +272,7 @@ void mp3_init(void) {
     gpio_set_dir(MP3_I2S_MUTE_PIN, GPIO_OUT);
     set_mute(false);
 
-    audio_pool = audio_new_producer_pool(&producer_format, 3, 1152);
+    audio_pool = audio_new_producer_pool(&producer_format, 4, MP3_I2S_BUFFER_SAMPLES);
     if (!audio_pool) {
         printf("MP3: audio pool alloc failed\n");
         error_flag = true;
@@ -245,22 +280,13 @@ void mp3_init(void) {
         return;
     }
 
-    struct audio_i2s_config config = {
-        .data_pin = MP3_I2S_DATA_PIN,
-        .clock_pin_base = MP3_I2S_BCLK_PIN,
-        .dma_channel = (uint)mp3_dma_channel,
-        .pio_sm = 0,
-    };
-
-    const struct audio_format *output_format = audio_i2s_setup(&audio_format, &config);
-    if (!output_format || !audio_i2s_connect(audio_pool)) {
+    i2s_config.dma_channel = (uint)mp3_dma_channel;
+    if (!i2s_start()) {
         printf("MP3: i2s setup/connect failed\n");
         error_flag = true;
         update_status_flags();
         return;
     }
-
-    audio_i2s_set_enabled(true);
     reset_decoder_state();
     update_status_flags();
 }
@@ -423,6 +449,14 @@ void mp3_update(void) {
         if (info.samprate > 0 && sample_rate != (uint32_t)info.samprate) {
             sample_rate = (uint32_t)info.samprate;
             audio_format.sample_freq = sample_rate;
+            if (i2s_ready) {
+                i2s_stop();
+                if (!i2s_start()) {
+                    error_flag = true;
+                    update_status_flags();
+                    return;
+                }
+            }
         }
         if (info.bitrate > 0 && mp3_file_size > 0 && (total_seconds == 0 || total_seconds_estimated)) {
             uint64_t bits = (uint64_t)mp3_file_size * 8ull;

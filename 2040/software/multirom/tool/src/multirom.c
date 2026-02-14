@@ -75,17 +75,31 @@ static uint8_t mapper_number_from_description(const char *description) {
 
 #define CONFIG_AREA_SIZE        (TARGET_FILE_SIZE - MENU_COPY_SIZE) // Size of the configuration area in the MENU ROM
 
-// Tracks the ROMs discovered on disk so they can be appended later in scan order.
+// Tracks the ROMs discovered on disk so they can be appended later in sorted order.
 typedef struct {
     char file_name[256];    // File name
     uint32_t file_size;     // File size
 } FileInfo;
+
+typedef struct {
+    char file_name[256];
+    char rom_name[MAX_FILE_NAME_LENGTH];
+    bool mapper_forced;
+    uint8_t forced_mapper_byte;
+} RomEntry;
 
 // Forward declarations
 void create_uf2_file(const uint8_t *data, size_t size, const char *uf2_filename);
 uint32_t file_size(const char *filename);
 uint8_t detect_rom_type(const char *filename, uint32_t size);
 static void print_usage(const char *prog_name);
+static void parse_rom_name_and_mapper_tag(const char *filename,
+                                          char *rom_name,
+                                          size_t rom_name_len,
+                                          bool *mapper_forced,
+                                          uint8_t *forced_mapper_byte);
+static int compare_rom_entries(const void *a, const void *b);
+static int compare_ignore_case(const char *a, const char *b);
 
 // Build modes supported by the tool.
 typedef enum {
@@ -300,6 +314,67 @@ static void print_usage(const char *prog_name) {
     printf("UF2 output file: %s\n", UF2FILENAME);
 }
 
+static void parse_rom_name_and_mapper_tag(const char *filename,
+                                          char *rom_name,
+                                          size_t rom_name_len,
+                                          bool *mapper_forced,
+                                          uint8_t *forced_mapper_byte) {
+    size_t name_length;
+    char *dot_position = strstr(filename, ".ROM");
+    if (dot_position == NULL) {
+        dot_position = strstr(filename, ".rom");
+    }
+
+    *mapper_forced = false;
+    *forced_mapper_byte = 0;
+
+    if (dot_position != NULL) {
+        name_length = (size_t)(dot_position - filename);
+
+        char *last_period = NULL;
+        for (char *p = (char *)filename; p < dot_position; ++p) {
+            if (*p == '.') {
+                last_period = p;
+            }
+        }
+
+        if (last_period) {
+            const char *token_start = last_period + 1;
+            size_t token_length = (size_t)(dot_position - token_start);
+            if (token_length > 0) {
+                char mapper_token[32];
+                if (token_length >= sizeof(mapper_token)) {
+                    token_length = sizeof(mapper_token) - 1;
+                }
+                memcpy(mapper_token, token_start, token_length);
+                mapper_token[token_length] = '\0';
+
+                uint8_t candidate = mapper_number_from_description(mapper_token);
+                if (candidate == 10) {
+                    printf("Ignoring SYSTEM mapper tag in %s (cannot be forced)\n", filename);
+                } else if (candidate != 0) {
+                    *mapper_forced = true;
+                    *forced_mapper_byte = candidate;
+                    name_length = (size_t)(last_period - filename);
+                }
+            }
+        }
+    } else {
+        name_length = strnlen(filename, rom_name_len);
+    }
+
+    if (rom_name_len == 0) {
+        return;
+    }
+
+    if (name_length >= rom_name_len) {
+        name_length = rom_name_len - 1;
+    }
+
+    strncpy(rom_name, filename, name_length);
+    rom_name[name_length] = '\0';
+}
+
 // Serialize the fully joined binary image into UF2 blocks so the Pico can be programmed via USB MSC.
 void create_uf2_file(const uint8_t *data, size_t size, const char *uf2_filename) {
 
@@ -428,7 +503,9 @@ int main(int argc, char *argv[])
     printf("Scanning current directory for .ROM files...\n\n");
     DIR *dir;
     struct dirent *entry;
-    FileInfo files[MAX_ROM_FILES]; // Array to track discovered ROM files
+    FileInfo files[MAX_ROM_FILES]; // Array to track ROM files for payload append
+    RomEntry rom_entries[MAX_ROM_FILES]; // Array to track discovered ROM files
+    int rom_count = 0;
     int file_count = 0;
     int file_index = 1;
     uint32_t base_offset = TARGET_FILE_SIZE; // Start appending ROMs after the MENU + config area
@@ -483,97 +560,72 @@ int main(int argc, char *argv[])
         }
 
         // Check maximum number of ROM files
-        if (file_count >= MAX_ROM_FILES) {
+        if (rom_count >= MAX_ROM_FILES) {
             printf("Maximum number of ROM files (%d) reached\n", MAX_ROM_FILES);
             break;
         }
 
-        // Extract ROM name (without extension) and check for forced mapper tags
-        char rom_name[MAX_FILE_NAME_LENGTH] = {0};
+        RomEntry *rom_entry = &rom_entries[rom_count];
+        memset(rom_entry, 0, sizeof(*rom_entry));
+        strncpy(rom_entry->file_name, entry->d_name, sizeof(rom_entry->file_name) - 1);
+        parse_rom_name_and_mapper_tag(entry->d_name,
+                                      rom_entry->rom_name,
+                                      sizeof(rom_entry->rom_name),
+                                      &rom_entry->mapper_forced,
+                                      &rom_entry->forced_mapper_byte);
+        rom_count++;
+    }
+
+    closedir(dir); // Close the directory
+
+    // Handle case of no ROM files found
+    if (rom_count == 0) {
+        if (include_nextor) {
+            printf("No external ROM files found; generating image with embedded Nextor only.\n");
+        } else {
+            printf("No ROM files found in the current directory.\n\n");
+            print_usage(argv[0] ? argv[0] : "multirom");
+            free(config_buffer);
+            return 1;
+        }
+    }
+
+    qsort(rom_entries, rom_count, sizeof(RomEntry), compare_rom_entries);
+
+    for (int i = 0; i < rom_count; ++i) {
+        RomEntry *rom_entry = &rom_entries[i];
         uint32_t rom_size = 0;
         uint32_t fl_offset = base_offset;
-        bool mapper_forced = false;
-        uint8_t forced_mapper_byte = 0;
 
-        char *dot_position = strstr(entry->d_name, ".ROM");
-        if (dot_position == NULL) {
-            dot_position = strstr(entry->d_name, ".rom");
-        }
-
-        size_t name_length;
-        if (dot_position != NULL) {
-            name_length = (size_t)(dot_position - entry->d_name);
-
-            char *last_period = NULL;
-            for (char *p = entry->d_name; p < dot_position; ++p) {
-                if (*p == '.') {
-                    last_period = p;
-                }
-            }
-
-            if (last_period) {
-                const char *token_start = last_period + 1;
-                size_t token_length = (size_t)(dot_position - token_start);
-                if (token_length > 0) {
-                    char mapper_token[32];
-                    if (token_length >= sizeof(mapper_token)) {
-                        token_length = sizeof(mapper_token) - 1;
-                    }
-                    memcpy(mapper_token, token_start, token_length);
-                    mapper_token[token_length] = '\0';
-
-                    uint8_t candidate = mapper_number_from_description(mapper_token);
-                    if (candidate == 10) {
-                        printf("Ignoring SYSTEM mapper tag in %s (cannot be forced)\n", entry->d_name);
-                    } else if (candidate != 0) {
-                        mapper_forced = true;
-                        forced_mapper_byte = candidate;
-                        name_length = (size_t)(last_period - entry->d_name);
-                    }
-                }
-            }
-        } else {
-            name_length = strnlen(entry->d_name, MAX_FILE_NAME_LENGTH);
-        }
-
-        if (name_length > MAX_FILE_NAME_LENGTH) {
-            name_length = MAX_FILE_NAME_LENGTH;
-        }
-        strncpy(rom_name, entry->d_name, name_length);
-        if (name_length < MAX_FILE_NAME_LENGTH) {
-            rom_name[name_length] = '\0';
-        } else {
-            rom_name[MAX_FILE_NAME_LENGTH - 1] = '\0';
-        }
-
-        rom_size = file_size(entry->d_name);
+        rom_size = file_size(rom_entry->file_name);
         if (rom_size == 0) {
-            printf("Skipping %s (unable to determine size)\n", entry->d_name);
+            printf("Skipping %s (unable to determine size)\n", rom_entry->file_name);
             continue;
         }
 
         // Detect mapper type
         if (rom_size > MAX_ROM_SIZE || rom_size < MIN_ROM_SIZE) {
-            printf("Skipping %s (invalid ROM size)\n", entry->d_name);
+            printf("Skipping %s (invalid ROM size)\n", rom_entry->file_name);
             continue;
         }
 
-        uint8_t mapper_byte = mapper_forced ? forced_mapper_byte : detect_rom_type(entry->d_name, rom_size);
+        uint8_t mapper_byte = rom_entry->mapper_forced ?
+            rom_entry->forced_mapper_byte :
+            detect_rom_type(rom_entry->file_name, rom_size);
         if (mapper_byte == 0) {
-            printf("Skipping %s (unsupported mapper)\n", entry->d_name);
+            printf("Skipping %s (unsupported mapper)\n", rom_entry->file_name);
             continue;
         }
 
         // Check if ROM fits in the remaining space
         if (config_offset + CONFIG_RECORD_SIZE > CONFIG_AREA_SIZE) {
             printf("Configuration area capacity exceeded\n");
-            closedir(dir);
             free(config_buffer);
             return 1;
         }
 
         // Write ROM metadata to configuration buffer
-        memcpy(config_buffer + config_offset, rom_name, MAX_FILE_NAME_LENGTH);
+        memcpy(config_buffer + config_offset, rom_entry->rom_name, MAX_FILE_NAME_LENGTH);
         config_offset += MAX_FILE_NAME_LENGTH;
         config_buffer[config_offset++] = mapper_byte;
         memcpy(config_buffer + config_offset, &rom_size, sizeof(rom_size));
@@ -582,11 +634,11 @@ int main(int argc, char *argv[])
         config_offset += sizeof(fl_offset);
 
         // Print ROM information
-         printf("File %02d: Name = %-50s, Size = %07u bytes, Flash Offset = 0x%08X, Mapper = %s%s\n",
-             file_index, rom_name, rom_size, fl_offset, mapper_description(mapper_byte),
-             mapper_forced ? " (forced)" : "");
+        printf("File %02d: Name = %-50s, Size = %07u bytes, Flash Offset = 0x%08X, Mapper = %s%s\n",
+               file_index, rom_entry->rom_name, rom_size, fl_offset, mapper_description(mapper_byte),
+               rom_entry->mapper_forced ? " (forced)" : "");
 
-        strncpy(files[file_count].file_name, entry->d_name, sizeof(files[file_count].file_name));
+        strncpy(files[file_count].file_name, rom_entry->file_name, sizeof(files[file_count].file_name));
         files[file_count].file_name[sizeof(files[file_count].file_name) - 1] = '\0';
         files[file_count].file_size = rom_size;
         file_count++;
@@ -596,24 +648,16 @@ int main(int argc, char *argv[])
 
         if (total_rom_size > MAX_TOTAL_ROM_SIZE) {
             printf("Total ROM data exceeds maximum supported size of %u bytes.\n", (unsigned)MAX_TOTAL_ROM_SIZE);
-            closedir(dir);
             free(config_buffer);
             return 1;
         }
     }
 
-    closedir(dir); // Close the directory
-
-    // Handle case of no ROM files found
-    if (file_count == 0) {
-        if (include_nextor) {
-            printf("No external ROM files found; generating image with embedded Nextor only.\n");
-        } else {
-            printf("No ROM files found in the current directory.\n\n");
-            print_usage(argv[0] ? argv[0] : "multirom");
-            free(config_buffer);
-            return 1;
-        }
+    if (file_count == 0 && !include_nextor) {
+        printf("No valid ROM files found in the current directory.\n\n");
+        print_usage(argv[0] ? argv[0] : "multirom");
+        free(config_buffer);
+        return 1;
     }
 
     // Prepare the final combined binary image
@@ -689,7 +733,7 @@ int main(int argc, char *argv[])
     }
 
     uint8_t io_buffer[4096];
-    // Append every scanned ROM in discovery order right after the Nextor payload.
+    // Append every scanned ROM in sorted order right after the Nextor payload.
     for (int i = 0; i < file_count; i++) {
         FILE *rom_file = fopen(files[i].file_name, "rb");
         if (!rom_file) {
@@ -719,4 +763,30 @@ int main(int argc, char *argv[])
     free(combined_buffer);
     free(config_buffer);
     return 0;
+}
+
+static int compare_ignore_case(const char *a, const char *b) {
+    while (*a || *b) {
+        int ca = toupper((unsigned char)*a);
+        int cb = toupper((unsigned char)*b);
+        if (ca != cb) {
+            return (ca < cb) ? -1 : 1;
+        }
+        if (*a == '\0' || *b == '\0') {
+            break;
+        }
+        ++a;
+        ++b;
+    }
+    return 0;
+}
+
+static int compare_rom_entries(const void *a, const void *b) {
+    const RomEntry *left = (const RomEntry *)a;
+    const RomEntry *right = (const RomEntry *)b;
+    int result = compare_ignore_case(left->rom_name, right->rom_name);
+    if (result == 0) {
+        result = compare_ignore_case(left->file_name, right->file_name);
+    }
+    return result;
 }

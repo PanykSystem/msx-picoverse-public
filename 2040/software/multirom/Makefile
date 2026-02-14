@@ -1,26 +1,34 @@
 ######################################################################
-# MSX PICOVERSE 2040 MultiROM PIO - Aggregate Makefile               #
+# MSX PICOVERSE 2040 multiROM - Aggregate Makefile                    #
 #                                                                    #
-# Invokes the individual build systems for each MultiROM component.  #
+# Invokes the individual build systems for each multiROM component.  #
 # Build order matters because later stages embed artifacts produced  #
 # by earlier ones, so the tool target always runs last.              #
 ######################################################################
 
 # Shared version (can be overridden on the command line)
-VERSION ?= v2.00
+VERSION ?= v1.04
 
 # Sub-project locations
-MSX_DIR    := msx
-NEXTOR_DIR := nextor
-PICO_DIR   := pico/multirom
-PICO_BUILD := $(PICO_DIR)/build
+MSX_DIR     := msx
+NEXTOR_DIR  := nextor
+PICO_DIR    := pico/multirom
+PICO_BUILD  := $(PICO_DIR)/build
 PICO_CONFIG := $(PICO_BUILD)/CMakeCache.txt
-TOOL_DIR   := tool
+TOOL_DIR    := tool
 
-# Optional: allow callers to pick a specific CMake generator
-CMAKE_GENERATOR ?=
-CMAKE_GENERATOR_FLAG := $(if $(CMAKE_GENERATOR),-G "$(CMAKE_GENERATOR)",)
+# CMake options
 CMAKE ?= c:/Users/Cristiano/.pico-sdk/cmake/v3.29.9/bin/cmake
+# Use Ninja on Windows to avoid NMake and missing MinGW make.
+ifeq ($(OS),Windows_NT)
+	CMAKE_GENERATOR ?= Ninja
+	CMAKE_MAKE_PROGRAM ?= C:/Users/Cristiano/.pico-sdk/ninja/v1.12.1/ninja.exe
+else
+	CMAKE_GENERATOR ?=
+endif
+CMAKE_GENERATOR_FLAG := $(if $(CMAKE_GENERATOR),-G "$(CMAKE_GENERATOR)",)
+CMAKE_BUILD_TYPE ?= Release
+CMAKE_MAKE_PROGRAM_FLAG := $(if $(CMAKE_MAKE_PROGRAM),-DCMAKE_MAKE_PROGRAM="$(CMAKE_MAKE_PROGRAM)",)
 
 .PHONY: all msx nextor pico tool clean
 
@@ -36,7 +44,7 @@ pico: nextor $(PICO_CONFIG)
 	$(CMAKE) --build $(PICO_BUILD)
 
 $(PICO_CONFIG):
-	$(CMAKE) $(CMAKE_GENERATOR_FLAG) -S $(PICO_DIR) -B $(PICO_BUILD)
+	$(CMAKE) $(CMAKE_GENERATOR_FLAG) $(CMAKE_MAKE_PROGRAM_FLAG) -S $(PICO_DIR) -B $(PICO_BUILD) -DCMAKE_BUILD_TYPE=$(CMAKE_BUILD_TYPE)
 
 tool: pico
 	$(MAKE) -C $(TOOL_DIR) VERSION=$(VERSION)
@@ -46,3 +54,4 @@ clean:
 	-$(MAKE) -C $(NEXTOR_DIR) clean VERSION=$(VERSION)
 	-@$(CMAKE) --build $(PICO_BUILD) --target clean
 	-$(MAKE) -C $(TOOL_DIR) clean VERSION=$(VERSION)
+	-@$(CMAKE) -E rm -rf $(PICO_BUILD)

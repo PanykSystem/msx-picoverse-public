@@ -63,7 +63,8 @@ pico_enable_stdio_usb(loadrom 0)
 # Add the standard library to the build
 target_link_libraries(loadrom
     pico_stdlib
-    hardware_pio)
+    hardware_pio
+    hardware_dma)
 
 # Add the standard include files to the build
 target_include_directories(loadrom PRIVATE

@@ -83,9 +83,10 @@ static void bus_pio_init(void)
     // Use SLTSL as the jmp pin to allow back-to-back reads while the slot stays selected.
     sm_config_set_jmp_pin(&c_rd, PIN_SLTSL);
     sm_config_set_out_shift(&c_rd, true, false, 8);
-    sm_config_set_in_shift(&c_rd, false, false, 32);
+    sm_config_set_in_shift(&c_rd, false, false, 16);
     sm_config_set_clkdiv(&c_rd, 1.0f);
     pio_sm_init(bus_pio.pio, bus_pio.sm_rd, offset_rd, &c_rd);
+    pio_sm_set_consecutive_pindirs(bus_pio.pio, bus_pio.sm_rd, PIN_A0, 16, false);
     pio_sm_set_consecutive_pindirs(bus_pio.pio, bus_pio.sm_rd, PIN_D0, 8, false);
     pio_sm_set_consecutive_pindirs(bus_pio.pio, bus_pio.sm_rd, PIN_WAIT, 2, true);
     pio_sm_clear_fifos(bus_pio.pio, bus_pio.sm_rd);
@@ -95,6 +96,7 @@ static void bus_pio_init(void)
     sm_config_set_in_shift(&c_wr, false, false, 32);
     sm_config_set_clkdiv(&c_wr, 1.0f);
     pio_sm_init(bus_pio.pio, bus_pio.sm_wr, offset_wr, &c_wr);
+    pio_sm_set_consecutive_pindirs(bus_pio.pio, bus_pio.sm_wr, PIN_A0, 16, false);
     pio_sm_clear_fifos(bus_pio.pio, bus_pio.sm_wr);
 
     pio_sm_set_enabled(bus_pio.pio, bus_pio.sm_rd, true);

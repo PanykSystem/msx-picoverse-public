@@ -6,22 +6,31 @@
 .side_set 2 opt
 .wrap_target
 start:
-    nop         side 0b01    ; WAIT=1 BUSSDIR=0
-    set pindirs, 0           ; data bus input
-wait_sltsl:
-    wait 0 pin 27            ; PIN_SLTSL
-wait_rd:
-    wait 0 pin 24            ; PIN_RD
-    in pins, 32
-    push block
-    nop         side 0b00    ; WAIT=0 BUSSDIR=0
-    pull block
-    set pindirs, 0xFF        ; data bus output
-    out pins, 8
     nop         side 0b11    ; WAIT=1 BUSSDIR=1
-    wait 1 pin 24            ; PIN_RD
-    set pindirs, 0           ; data bus input
-    nop         side 0b01    ; WAIT=1 BUSSDIR=0
+    mov osr, null            ; data bus input
+    out pindirs, 8     side 0b11
+wait_sltsl:
+    wait 0 pin 27     side 0b11 ; PIN_SLTSL
+wait_rd:
+    wait 0 pin 24     side 0b11 ; PIN_RD
+    nop         side 0b10    ; WAIT=0 BUSSDIR=1 (stretch read)
+    nop         side 0b10    ; allow address to settle
+    in pins, 16       side 0b10
+    push block        side 0b10
+    pull block        side 0b10
+    mov x, osr               ; preserve data byte
+    mov osr, ~null           ; data bus output
+    out pindirs, 8     side 0b10
+    mov osr, x               ; restore data byte
+    out pins, 8        side 0b10
+    nop         side 0b10    ; hold data with WAIT low
+    nop         side 0b10    ; hold data with WAIT low
+    nop         side 0b10    ; hold data with WAIT low
+    nop         side 0b11    ; WAIT=1 BUSSDIR=1 (release read)
+    wait 1 pin 24     side 0b11 ; PIN_RD
+    mov osr, null            ; data bus input
+    out pindirs, 8     side 0b11
+    nop         side 0b11    ; WAIT=1 BUSSDIR=1
     jmp pin wait_sltsl       ; If SLTSL high, wait for next slot select
     jmp wait_rd              ; Otherwise keep serving back-to-back reads
 .wrap

@@ -10,7 +10,7 @@ static void render_mp3_visualizer(unsigned int frame, int is_80);
 static void render_mp3_clear(int is_80);
 static void render_mp3_status_line(unsigned char status, const char *elapsed);
 static void build_mp3_action_text(int is_playing, char *out, size_t out_size);
-static void build_mp3_mute_text(unsigned char status, char *out, size_t out_size);
+static void build_mp3_mute_text(int is_muted, char *out, size_t out_size);
 static void build_mp3_visualizer_text(int enabled, char *out, size_t out_size);
 static void format_time(unsigned int seconds, char *out);
 static unsigned char mp3_read_status(void);
@@ -49,8 +49,8 @@ static void build_mp3_action_text(int is_playing, char *out, size_t out_size) {
     out[out_size - 1] = '\0';
 }
 
-static void build_mp3_mute_text(unsigned char status, char *out, size_t out_size) {
-    const char *label = (status & MP3_STATUS_MUTED) ? "Mute: On" : "Mute: Off";
+static void build_mp3_mute_text(int is_muted, char *out, size_t out_size) {
+    const char *label = is_muted ? "Mute: On" : "Mute: Off";
     strncpy(out, label, out_size - 1);
     out[out_size - 1] = '\0';
 }
@@ -105,10 +105,10 @@ static void render_mp3_status_line(unsigned char status, const char *elapsed) {
     const char *label_40 = "[ENTR-TOGGLE] [ESC-BACK]";
     if (use_80_columns) {
         sprintf(line, "STATUS: %-4s  EL %s  %s%s", state, elapsed,
-                (status & MP3_STATUS_MUTED) ? "MUTE" : "", (status & MP3_STATUS_ERROR) ? " ERR" : "");
+            (status & MP3_STATUS_MUTED) ? "MUTE" : "", (status & MP3_STATUS_ERROR) ? " ERR" : "");
     } else {
         sprintf(line, "%-4s EL %s %s%s", state, elapsed,
-                (status & MP3_STATUS_MUTED) ? "M" : "", (status & MP3_STATUS_ERROR) ? "E" : "");
+            (status & MP3_STATUS_MUTED) ? "M" : "", (status & MP3_STATUS_ERROR) ? "E" : "");
     }
     unsigned char row_width = menu_ui_row_width();
     unsigned char len = (unsigned char)strlen(line);
@@ -201,7 +201,7 @@ void show_mp3_screen(unsigned int index) {
     unsigned char status = mp3_read_status();
     mute_enabled = (status & MP3_STATUS_MUTED) != 0;
     build_mp3_action_text(action_playing, action_text, sizeof(action_text));
-    build_mp3_mute_text(mute_enabled ? MP3_STATUS_MUTED : 0, mute_text, sizeof(mute_text));
+    build_mp3_mute_text(mute_enabled, mute_text, sizeof(mute_text));
     build_mp3_visualizer_text(visualizer_enabled, visualizer_text, sizeof(visualizer_text));
     menu_ui_render_selectable_line(7, action_text, selection == 0);
     menu_ui_render_selectable_line(8, mute_text, selection == 1);
@@ -242,7 +242,6 @@ void show_mp3_screen(unsigned int index) {
                         selected_sent = 1;
                     }
                     mp3_send_cmd(MP3_CMD_TOGGLE_MUTE);
-                    mute_enabled = !mute_enabled;
                 } else if (selection == 2) {
                     if (!selected_sent) {
                         mp3_send_select(index);
@@ -292,12 +291,13 @@ void show_mp3_screen(unsigned int index) {
             format_time(elapsed, elapsed_str);
 
             build_mp3_action_text(action_playing, action_text, sizeof(action_text));
-            build_mp3_mute_text(mute_enabled ? MP3_STATUS_MUTED : 0, mute_text, sizeof(mute_text));
+            mute_enabled = (status & MP3_STATUS_MUTED) != 0;
+            build_mp3_mute_text(mute_enabled, mute_text, sizeof(mute_text));
             build_mp3_visualizer_text(visualizer_enabled, visualizer_text, sizeof(visualizer_text));
             menu_ui_render_selectable_line(7, action_text, selection == 0);
             menu_ui_render_selectable_line(8, mute_text, selection == 1);
             menu_ui_render_selectable_line(9, visualizer_text, selection == 2);
-            render_mp3_status_line(mute_enabled ? (status | MP3_STATUS_MUTED) : (unsigned char)(status & ~MP3_STATUS_MUTED), elapsed_str);
+            render_mp3_status_line(status, elapsed_str);
 
             if (visualizer_enabled && (status & MP3_STATUS_PLAYING)) {
                 viz_frame++;

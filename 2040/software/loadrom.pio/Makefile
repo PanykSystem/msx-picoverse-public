@@ -19,9 +19,16 @@ TOOL_DIR := tool
 
 # CMake options
 CMAKE ?= c:/Users/Cristiano/.pico-sdk/cmake/v3.29.9/bin/cmake
-CMAKE_GENERATOR ?=
+# Use Ninja on Windows to avoid NMake and missing MinGW make.
+ifeq ($(OS),Windows_NT)
+	CMAKE_GENERATOR ?= Ninja
+	CMAKE_MAKE_PROGRAM ?= C:/Users/Cristiano/.pico-sdk/ninja/v1.12.1/ninja.exe
+else
+	CMAKE_GENERATOR ?=
+endif
 CMAKE_GENERATOR_FLAG := $(if $(CMAKE_GENERATOR),-G "$(CMAKE_GENERATOR)",)
 CMAKE_BUILD_TYPE ?= Release
+CMAKE_MAKE_PROGRAM_FLAG := $(if $(CMAKE_MAKE_PROGRAM),-DCMAKE_MAKE_PROGRAM="$(CMAKE_MAKE_PROGRAM)",)
 
 # Make options
 MAKE ?= make
@@ -37,7 +44,7 @@ firmware: $(PICO_CONFIG)
 	@$(CMAKE) --build "$(PICO_BUILD)"
 
 $(PICO_CONFIG):
-	@$(CMAKE) $(CMAKE_GENERATOR_FLAG) -S "$(PICO_DIR)" -B "$(PICO_BUILD)" -DCMAKE_BUILD_TYPE=$(CMAKE_BUILD_TYPE)
+	@$(CMAKE) $(CMAKE_GENERATOR_FLAG) $(CMAKE_MAKE_PROGRAM_FLAG) -S "$(PICO_DIR)" -B "$(PICO_BUILD)" -DCMAKE_BUILD_TYPE=$(CMAKE_BUILD_TYPE)
 
 tool:
 	@echo "Building PC tool"
@@ -47,3 +54,4 @@ clean:
 	@echo "Cleaning firmware and tool"
 	@$(MAKE) -C "$(TOOL_DIR)" clean VERSION=$(VERSION)
 	@$(CMAKE) --build "$(PICO_BUILD)" --target clean || true
+	@$(CMAKE) -E rm -rf "$(PICO_BUILD)"

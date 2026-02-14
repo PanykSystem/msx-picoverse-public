@@ -1126,6 +1126,8 @@ int __no_inline_not_in_flash_func(loadrom_msx_menu)(uint32_t offset)
     memcpy(rom_sram, flash_rom + offset, MENU_ROM_SIZE); // Load full 32KB menu ROM
     gpio_put(PIN_WAIT, 1); // Lets go!
 
+    mp3_set_external_buffer(rom_sram + MENU_ROM_SIZE, sizeof(rom_sram) - MENU_ROM_SIZE);
+
     int record_count = 0; // Record count
     const uint8_t *record_ptr = flash_rom + offset + MENU_ROM_SIZE; // Pointer to the ROM records
     for (int i = 0; i < MAX_FLASH_RECORDS; i++)      // Read the ROMs from the configuration area

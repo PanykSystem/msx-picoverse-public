@@ -13,7 +13,6 @@ PicoVerse is designed as an open-source, independent, and documented MSX cartrid
 ## Whats New in PicoVerse?
 
 - New PIO based **LoadROM** firmware for PicoVerse 2040, which allows more reliable ROM loading and better support for edge cases. ***(NEW!)***
-- New PIO based **MultiROM** firmware for PicoVerse 2040 that improves bus timing and stability. ***(NEW!)***
 - New Explorer firmware for 2350 that merges flash and microSD ROMs into a single menu with source labels, search, and MP3 playback. ***(NEW!)***
 - New hardware revision for 2350 with microSD slot, ESP8266 header, and I2S DAC. BOM and Gerbers available. ***(NEW!)***
 - Updated documentation with detailed guides for the new tools and features. ***(NEW!)***
@@ -156,7 +155,7 @@ The LoadROM tool targets situations where you want the PicoVerse to behave like 
    4. Put the Pico into BOOTSEL mode and copy the generated UF2 to the `RPI-RP2` drive.
    5. Insert the cartridge into your MSX—on power-up the embedded game launches immediately.
 
-Consult the LoadROM manuals (English, Spanish, Japanese, and Brazilian Portuguese) linked above for screenshots, troubleshooting, and in-depth explanations of mapper forcing, UF2 structure, and limitations.
+Consult the LoadROM manuals linked above for screenshots, troubleshooting, and in-depth explanations of mapper forcing, UF2 structure, and limitations.
 
 ## Explorer Firmware (RP2350)
 
