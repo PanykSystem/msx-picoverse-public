@@ -1,0 +1,5 @@
+- New PIO based **MultiROM** firmware for PicoVerse 2040, which allows more reliable ROM loading and better support for edge cases. ***(NEW!)***
+- New PIO based **LoadROM** firmware path for PicoVerse 2350 (`2350/software/loadrom.pio`). ***(NEW!)***
+- PicoVerse 2350 PIO LoadROM firmware now supports SCC/SCC+ emulation with -scc and -sccplus options. Details available in the [MSX PicoVerse 2350 SCC Emulation Guide](/docs/msx-picoverse-2350-scc.md) ***(NEW!)***
+- Updated documentation with platform-specific PIO strategy notes for 2040 and 2350 [MSX PicoVerse 2040 PIO Strategy](/docs/msx-picoverse-2040-pio.md), [MSX PicoVerse 2350 PIO Strategy](/docs/msx-picoverse-2350-pio.md) ***(NEW!)***
+
