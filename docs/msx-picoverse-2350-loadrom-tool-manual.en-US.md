@@ -4,6 +4,11 @@ The PicoVerse 2350 cartridge can boot either a MultiROM menu or a single ROM tha
 
 `loadrom.exe` bundles the Pico firmware blob, a configuration record (game name, mapper code, ROM size, and flash offset), and one MSX ROM file into an RP2350-compatible UF2 image. Copy the generated UF2 to the board in BOOTSEL mode and the MSX will boot straight into the embedded ROM.
 
+For RP2350, both firmware packages are available:
+
+- `2350/software/loadrom` (legacy bit-banged bus handling).
+- `2350/software/loadrom.pio` (PIO-based bus handling, recommended).
+
 ---
 
 ## Overview
@@ -110,4 +115,4 @@ The UF2 writer sets `UF2_FLAG_FAMILYID_PRESENT` and uses the RP2350 family ID (`
 - Additional mapper heuristics.
 
 Author: Cristiano Almeida Goncalves  
-Last updated: 01/25/2026
+Last updated: 02/15/2026

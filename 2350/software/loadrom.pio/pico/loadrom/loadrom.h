@@ -58,6 +58,18 @@
 #define PIN_BUSSDIR 37  // Bus direction line 
 #define PIN_PSRAM   47  // PSRAM select line
 
+// I2S DAC pins
+#define I2S_DATA_PIN  29   // I2S serial data
+#define I2S_BCLK_PIN  30   // I2S bit clock
+#define I2S_WSEL_PIN  31   // I2S word select (LRCLK)
+#define I2S_MUTE_PIN  32   // I2S DAC mute control
+
+// SCC emulation constants
+#define SCC_SAMPLE_RATE 44100
+#define SCC_CLOCK       3579545
+#define SCC_FLAG        0x80u   // Bit flag in rom_type for SCC emulation
+#define SCC_PLUS_FLAG   0x40u   // Bit flag in rom_type for SCC+ (enhanced) emulation
+
 // This symbol marks the end of the main program in flash.
 // The ROM data is concatenated immediately after this point.
 extern unsigned char __flash_binary_end;

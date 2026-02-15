@@ -13,13 +13,16 @@ PicoVerse is designed as an open-source, independent, and documented MSX cartrid
 ## Whats New in PicoVerse?
 
 - New PIO based **MultiROM** firmware for PicoVerse 2040, which allows more reliable ROM loading and better support for edge cases. ***(NEW!)***
-- Updated documentation with details about the MultiROM PIO implementation for PicoVerse 2040 [MSX PicoVerse 2040 MultiROM PIO Implementation](/docs/msx-picoverse-2040-multirom-pio.md) ***(NEW!)***
+- New PIO based **LoadROM** firmware path for PicoVerse 2350 (`2350/software/loadrom.pio`). ***(NEW!)***
+- PicoVerse 2350 PIO LoadROM firmware now supports SCC/SCC+ emulation with -scc and -sccplus options. Details available in the [MSX PicoVerse 2350 SCC Emulation Guide](/docs/msx-picoverse-2350-scc.md) ***(NEW!)***
+- Updated documentation with platform-specific PIO strategy notes for 2040 and 2350 [MSX PicoVerse 2040 PIO Strategy](/docs/msx-picoverse-2040-pio.md), [MSX PicoVerse 2350 PIO Strategy](/docs/msx-picoverse-2350-pio.md) ***(NEW!)***
 
 ## Project Highlights
 - Multi-ROM loader with an on-screen menu and mapper auto-detection.
 - Single-ROM LoadROM workflow for instant booting of one title without entering the menu.
 - Explorer firmware (RP2350) merges flash and microSD ROMs, labels the source (FL/SD), adds MP3 playback, and supports on-device search.
 - Ready-made Nextor builds with USB (RP2040) or microSD (RP2350) storage bridges.
+- SCC/SCC+ emulation on the RP2350 LoadROM firmware, with auto-detection and manual forcing options. ***(NEW!)***
 - PC-side tooling that generates UF2 images locally for quick drag-and-drop flashing.
 - BOMs, and production-ready Gerbers.
 - Active development roadmap covering RP2040 and RP2350-based cartridges.
@@ -40,8 +43,9 @@ PicoVerse is designed as an open-source, independent, and documented MSX cartrid
 **Reference Material**
 - [PicoVerse 2040 Features Overview](/docs/msx-picoverse-2040-features.md)
 - [PicoVerse 2350 Features Overview](/docs/msx-picoverse-2350-features.md)
-- [MSX PicoVerse 2040 LoadROM PIO Implementation](/docs/msx-picoverse-2040-loadrom-pio.md)
-- [MSX PicoVerse 2040 MultiROM PIO Implementation](/docs/msx-picoverse-2040-multirom-pio.md) ***(NEW!)***
+- [MSX PicoVerse 2040 PIO Strategy](/docs/msx-picoverse-2040-pio.md) ***(NEW!)***
+- [MSX PicoVerse 2350 PIO Strategy](/docs/msx-picoverse-2350-pio.md) ***(NEW!)***
+- [MSX PicoVerse 2350 SCC Emulation Guide](/docs/msx-picoverse-2350-scc.md) ***(NEW!)***
 - [Nextor Pico Bridge Protocol](/docs/Nextor-Pico-Bridge-Protocol.md)
 
 ## Hardware Variants
@@ -148,7 +152,9 @@ The LoadROM tool targets situations where you want the PicoVerse to behave like 
 - **Input**: exactly one `.ROM` file. Mapper type is auto-detected with the same heuristics as MultiROM, and you can still force a mapper via filename tags such as `.KonSCC.ROM` or `.PL-32.ROM`.
 - **Output**: `loadrom.uf2` by default, or any filename you pass via `-o`. The UF2 contains the firmware, a 59-byte configuration record (title, mapper, size, flash offset), and the ROM payload.
 - **Workflow**:
-   1. Open a Command Prompt or PowerShell window in `2040/software/loadrom/tool`.
+   1. Open a Command Prompt or PowerShell window in your target package folder:
+      - `2350/software/loadrom/tool` (legacy bit-banged firmware), or
+      - `2350/software/loadrom.pio/tool` (PIO-based firmware, recommended).
    2. Run `loadrom.exe -o mygame.uf2 \\path\\to\\Game.ROM` (the tool also accepts drag-and-drop onto the EXE).
    3. Observe the reported ROM name, size, mapper status (auto vs forced), and Pico offset before the UF2 is written.
    4. Put the Pico into BOOTSEL mode and copy the generated UF2 to the `RPI-RP2` drive.

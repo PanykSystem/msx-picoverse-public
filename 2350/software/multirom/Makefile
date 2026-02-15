@@ -1,18 +1,18 @@
 ######################################################################
-# MSX PICOVERSE 2350 Explorer - Aggregate Makefile                   #
+# MSX PICOVERSE 2350 multiROM - Aggregate Makefile                    #
 #                                                                    #
-# Invokes the individual build systems for each Explorer component.  #
+# Invokes the individual build systems for each multiROM component.  #
 # Build order matters because later stages embed artifacts produced  #
 # by earlier ones, so the tool target always runs last.              #
 ######################################################################
 
 # Shared version (can be overridden on the command line)
-VERSION ?= v1.25
+VERSION ?= v1.02
 
 # Sub-project locations
 MSX_DIR       := msx
 NEXTOR_SD_DIR := nextor_sd
-PICO_DIR      := pico/explorer
+PICO_DIR      := pico/multirom
 PICO_BUILD    := $(PICO_DIR)/build
 PICO_CONFIG   := $(PICO_BUILD)/CMakeCache.txt
 TOOL_DIR      := tool
