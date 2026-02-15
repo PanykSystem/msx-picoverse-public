@@ -30,7 +30,7 @@ PicoVerse is designed as an open-source, independent, and documented MSX cartrid
 ## Documentation
 
 **MultiROM Guides**
-- [PicoVerse 2040 MultiROM Guide Manual (English)](/docs/msx-picoverse-2040-multirom-tool-manual.en-US.md)
+- [PicoVerse 2040 MultiROM Guide Manual (English)](/docs/msx-picoverse-2040-multirom-tool-manual.en-us.md)
 - [PicoVerse 2350 MultiROM Tool Manual (English)](/docs/msx-picoverse-2350-multirom-tool-manual.en-us.md)
 
 **LoadROM Guides**
