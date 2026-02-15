@@ -9,6 +9,8 @@ For RP2350, both firmware packages are available:
 - `2350/software/loadrom` (legacy bit-banged bus handling).
 - `2350/software/loadrom.pio` (PIO-based bus handling, recommended).
 
+> **Important:** SCC/SCC+ emulation options (`-scc`, `-sccplus`) are supported **only** by the PIO firmware package (`2350/software/loadrom.pio`). They are not supported in the legacy `2350/software/loadrom` package.
+
 ---
 
 ## Overview
@@ -35,8 +37,12 @@ loadrom.exe [options] <romfile>
 ### Options
 
 - `-h`, `--help` : Print usage information and exit.
+- `-scc`, `--scc` : Enable SCC (standard) sound emulation flag (Konami SCC mapper only).
+- `-sccplus`, `--sccplus` : Enable SCC+ (enhanced) sound emulation flag (Konami SCC mapper only).
 - `-o <filename>`, `--output <filename>` : Override the UF2 output name (default `loadrom.uf2`).
 - Positional argument: the ROM file to embed. Exactly one ROM is required.
+
+`-scc` and `-sccplus` are mutually exclusive. If both are provided, the tool exits with an error.
 
 ### Mapper forcing via filename tags
 
@@ -64,6 +70,11 @@ Space Manbow.KonSCC.rom
    ```
    loadrom.exe "Space Manbow.rom" -o space_manbow.uf2
    ```
+   SCC/SCC+ examples:
+   ```
+   loadrom.exe -scc "Space Manbow.rom"
+   loadrom.exe -sccplus "Snatcher.KonSCC.rom"
+   ```
 4. Review the console output (name, size, mapper, and flash offset).
 5. Hold BOOTSEL while connecting the PicoVerse 2350 to USB.
 6. Copy the generated UF2 to the `RPI-RP2` drive.
@@ -78,7 +89,10 @@ The UF2 image contains:
 1. **Firmware blob** – embedded `loadrom` firmware.
 2. **Configuration record** (59 bytes):
    - 50 bytes: ROM name (ASCII, padded/truncated).
-   - 1 byte : mapper ID.
+   - 1 byte : mapper ID and optional SCC/SCC+ flags:
+     - Bit 7 (`0x80`) = SCC emulation enabled.
+     - Bit 6 (`0x40`) = SCC+ emulation enabled.
+     - Bits 0..5 = base mapper ID.
    - 4 bytes: ROM size (little-endian).
    - 4 bytes: ROM flash offset (little-endian).
 3. **ROM payload** – raw ROM data appended after the config record.
@@ -93,6 +107,9 @@ The UF2 writer sets `UF2_FLAG_FAMILYID_PRESENT` and uses the RP2350 family ID (`
 | --- | --- | --- |
 | "Invalid ROM size" | ROM < 8 KB or > 16 MB | Use a valid ROM size. |
 | "Failed to detect the ROM type" | Mapper heuristics failed | Add a mapper tag (e.g., `.Konami.ROM`). |
+| "Warning: -scc flag ignored" | ROM is not Konami SCC mapper | Use a Konami SCC ROM or remove `-scc`. |
+| "Warning: -sccplus flag ignored" | ROM is not Konami SCC mapper | Use a Konami SCC ROM or remove `-sccplus`. |
+| "Error: -scc and -sccplus are mutually exclusive" | Both options were passed together | Use only one of the two options. |
 | UF2 not recognized | Not in BOOTSEL, or wrong file | Enter BOOTSEL and copy the UF2 again. |
 | Name truncated in menu | Filename too long | Shorten the filename. |
 
@@ -103,6 +120,8 @@ The UF2 writer sets `UF2_FLAG_FAMILYID_PRESENT` and uses the RP2350 family ID (`
 - Only one ROM per UF2 (use the MultiROM or Explorer tools for multiple titles).
 - Linux/macOS binaries are not provided (use Windows or build from source).
 - The tool does not verify ROM integrity beyond size and mapper heuristics.
+- SCC/SCC+ flags are only applied for Konami SCC mapper ROMs (type 3); otherwise they are ignored with a warning.
+- SCC/SCC+ emulation is available only in the PIO firmware variant (`loadrom.pio`).
 - Excessive flashing can wear out flash memory.
 
 ---
