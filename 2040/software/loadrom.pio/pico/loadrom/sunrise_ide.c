@@ -19,6 +19,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "pico/stdlib.h"
+#include "pico/sync.h"
 #include "bsp/board.h"
 #include "tusb.h"
 #include "class/msc/msc_host.h"
@@ -37,8 +38,10 @@ static volatile bool usb_device_mounted = false;
 static volatile uint32_t usb_block_count = 0;
 static volatile uint32_t usb_block_size = 0;
 
-// Block I/O buffers — aligned for DMA
-CFG_TUH_MEM_SECTION TU_ATTR_ALIGNED(4) static uint8_t usb_read_buffer[512];
+// Block I/O buffers — aligned for DMA.
+// usb_read_buffer is 4096 bytes to accommodate devices with 4K native sectors.
+// Each USB read fetches one native block; we extract the correct 512-byte slice.
+CFG_TUH_MEM_SECTION TU_ATTR_ALIGNED(4) static uint8_t usb_read_buffer[4096];
 CFG_TUH_MEM_SECTION TU_ATTR_ALIGNED(4) static uint8_t usb_write_buffer[512];
 
 // Pending request flags (set by Core 0/IDE handler, cleared by Core 1)
@@ -49,6 +52,17 @@ static volatile uint32_t usb_write_lba = 0;
 
 static volatile bool usb_read_in_progress = false;
 static volatile bool usb_write_in_progress = false;
+
+// Timestamp (in microseconds) when the current USB transfer started.
+// Used for timeout detection — slow or stalled USB devices must not
+// keep the IDE in BSY state indefinitely.
+static volatile uint64_t usb_transfer_start_us = 0;
+
+// Maximum time (microseconds) to wait for a single USB sector transfer.
+// USB Full Speed (12 Mbps): a 512-byte bulk transfer takes ~0.5 ms minimum.
+// Slow devices may NAK for many frames during flash wear-levelling.
+// Allow a generous 3 seconds to accommodate the slowest devices.
+#define USB_TRANSFER_TIMEOUT_US  3000000u
 
 // -----------------------------------------------------------------------
 // ATA IDENTIFY DEVICE response builder
@@ -72,7 +86,11 @@ static void build_identify_data(uint8_t *buf)
     w[0] = 0x0040;  // Fixed device, non-removable
 
     // Words 1-3: Legacy CHS geometry (fake values for LBA device)
+    // The ATA interface presents 512-byte sectors to the MSX.
+    // For devices with larger native sectors, multiply the block count.
     uint32_t total = usb_block_count;
+    if (usb_block_size > 512)
+        total *= (usb_block_size / 512);
     uint16_t heads = 16;
     uint16_t spt = 63;
     uint32_t cyls_calc = total / (heads * spt);
@@ -597,12 +615,15 @@ static bool read_complete_cb(uint8_t dev_addr, tuh_msc_complete_data_t const *cb
         return false;
     }
 
-    // Copy data to IDE sector buffer
-    uint16_t len = (usb_block_size > 512) ? 512 : (uint16_t)usb_block_size;
-    memcpy(usb_ide_ctx->sector_buffer, usb_read_buffer, len);
-    if (len < 512)
-        memset(&usb_ide_ctx->sector_buffer[len], 0x00, 512 - len);
+    // For devices with native sectors > 512 bytes (e.g. 4K), byte_offset
+    // is the offset within the native block where our 512-byte ATA sector
+    // lives.  It was passed via the user_arg parameter of tuh_msc_read10().
+    uint32_t byte_offset = (uint32_t)cb_data->user_arg;
 
+    // Copy the correct 512-byte slice to the IDE sector buffer.
+    memcpy(usb_ide_ctx->sector_buffer, &usb_read_buffer[byte_offset], 512);
+
+    __dmb();
     usb_ide_ctx->usb_read_ready = true;
     return true;
 }
@@ -646,22 +667,63 @@ void __not_in_flash_func(sunrise_usb_task)(void)
         if (usb_ide_ctx == NULL)
             continue;
 
+        // --- Timeout watchdog for in-progress USB transfers ---
+        // Slow or stalled USB devices must not leave IDE in permanent BSY.
+        // If a transfer exceeds the timeout, treat it as a failure so the
+        // MSX driver sees ERR and can retry or report the fault.
+        if ((usb_read_in_progress || usb_write_in_progress) && usb_transfer_start_us != 0)
+        {
+            uint64_t elapsed = time_us_64() - usb_transfer_start_us;
+            if (elapsed > USB_TRANSFER_TIMEOUT_US)
+            {
+                if (usb_read_in_progress)
+                {
+                    usb_read_in_progress = false;
+                    usb_ide_ctx->usb_read_failed = true;
+                }
+                if (usb_write_in_progress)
+                {
+                    usb_write_in_progress = false;
+                    usb_ide_ctx->usb_write_failed = true;
+                }
+                usb_transfer_start_us = 0;
+            }
+        }
+
         // --- Handle read request from Core 0 ---
         if (usb_read_requested && !usb_read_in_progress && usb_device_mounted)
         {
             usb_read_requested = false;
             usb_read_in_progress = true;
+            usb_transfer_start_us = time_us_64();
 
             uint32_t lba = usb_read_lba;
-            if (lba >= usb_block_count || usb_block_size == 0 || usb_block_size > 512)
+
+            // Convert LBA if the USB device has non-512 byte sectors (e.g. 4K).
+            // The ATA interface presents a 512-byte sector view to the MSX.
+            // For devices with larger native sectors, we read the native sector
+            // that contains the requested 512-byte LBA and extract the right
+            // 512-byte slice.
+            uint32_t native_lba = lba;
+            uint32_t byte_offset = 0;
+            if (usb_block_size > 512)
+            {
+                uint32_t sectors_per_block = usb_block_size / 512;
+                native_lba = lba / sectors_per_block;
+                byte_offset = (lba % sectors_per_block) * 512;
+            }
+
+            if (native_lba >= usb_block_count || usb_block_size == 0)
             {
                 usb_read_in_progress = false;
+                usb_transfer_start_us = 0;
                 usb_ide_ctx->usb_read_failed = true;
             }
             else if (!tuh_msc_read10(current_dev_addr, current_lun, usb_read_buffer,
-                                      lba, 1, read_complete_cb, 0))
+                                      native_lba, 1, read_complete_cb, (uintptr_t)byte_offset))
             {
                 usb_read_in_progress = false;
+                usb_transfer_start_us = 0;
                 usb_ide_ctx->usb_read_failed = true;
             }
         }
@@ -671,25 +733,44 @@ void __not_in_flash_func(sunrise_usb_task)(void)
         {
             usb_write_requested = false;
             usb_write_in_progress = true;
+            usb_transfer_start_us = time_us_64();
 
             uint32_t lba = usb_write_lba;
-            if (lba >= usb_block_count || usb_block_size == 0 || usb_block_size > 512)
+
+            // For devices with native block size > 512 bytes, a single
+            // 512-byte ATA write cannot be directly mapped to a native
+            // block write (would require read-modify-write).  This is
+            // extremely rare for USB flash drives; report an error if
+            // it ever occurs rather than corrupting data.
+            if (usb_block_size != 512)
             {
                 usb_write_in_progress = false;
+                usb_transfer_start_us = 0;
+                usb_ide_ctx->usb_write_failed = true;
+            }
+            else if (lba >= usb_block_count)
+            {
+                usb_write_in_progress = false;
+                usb_transfer_start_us = 0;
                 usb_ide_ctx->usb_write_failed = true;
             }
             else if (!tuh_msc_write10(current_dev_addr, current_lun, usb_write_buffer,
                                        lba, 1, write_complete_cb, 0))
             {
                 usb_write_in_progress = false;
+                usb_transfer_start_us = 0;
                 usb_ide_ctx->usb_write_failed = true;
             }
         }
 
         // --- Propagate USB completion status to IDE state machine ---
+        // Memory barrier ensures sector_buffer writes from the callback
+        // are fully committed before we transition the IDE state.
         if (usb_ide_ctx->usb_read_ready)
         {
             usb_ide_ctx->usb_read_ready = false;
+            usb_transfer_start_us = 0;
+            __dmb();
             usb_ide_ctx->buffer_index = 0;
             usb_ide_ctx->buffer_length = 512;
             usb_ide_ctx->data_latch_valid = false;
@@ -700,6 +781,7 @@ void __not_in_flash_func(sunrise_usb_task)(void)
         if (usb_ide_ctx->usb_read_failed)
         {
             usb_ide_ctx->usb_read_failed = false;
+            usb_transfer_start_us = 0;
             usb_ide_ctx->status = ATA_STATUS_DRDY | ATA_STATUS_ERR;
             usb_ide_ctx->error = ATA_ERROR_ABRT;
             usb_ide_ctx->state = IDE_STATE_IDLE;
@@ -708,6 +790,7 @@ void __not_in_flash_func(sunrise_usb_task)(void)
         if (usb_ide_ctx->usb_write_ready)
         {
             usb_ide_ctx->usb_write_ready = false;
+            usb_transfer_start_us = 0;
             ide_advance_lba(usb_ide_ctx);
 
             if (usb_ide_ctx->sectors_remaining > 0)
@@ -729,6 +812,7 @@ void __not_in_flash_func(sunrise_usb_task)(void)
         if (usb_ide_ctx->usb_write_failed)
         {
             usb_ide_ctx->usb_write_failed = false;
+            usb_transfer_start_us = 0;
             usb_ide_ctx->status = ATA_STATUS_DRDY | ATA_STATUS_ERR;
             usb_ide_ctx->error = ATA_ERROR_ABRT;
             usb_ide_ctx->state = IDE_STATE_IDLE;
@@ -739,6 +823,7 @@ void __not_in_flash_func(sunrise_usb_task)(void)
         {
             usb_ide_ctx->usb_identify_pending = false;
             build_identify_data(usb_ide_ctx->sector_buffer);
+            __dmb();
             usb_ide_ctx->buffer_index = 0;
             usb_ide_ctx->buffer_length = 512;
             usb_ide_ctx->data_latch_valid = false;
