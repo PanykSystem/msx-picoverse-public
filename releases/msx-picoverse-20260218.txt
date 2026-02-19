@@ -1,4 +1,4 @@
 - New Sunrise IDE emulation feature and Nextor support on the RP2040-based cartridge, allowing the USB-C port to function as a Sunrise IDE-compatible hard disk. Full documentation available [here](/docs/msx-picoverse-2040-sunrise-nextor.md) ***(NEW!)***
 - New PIO based **MultiROM** firmware and tool for PicoVerse 2350 (`2350/software/multirom.pio`) with automatic SCC emulation for Konami SCC mappers. ***(NEW!)***
 - New PIO based **Explorer** firmware and tool for PicoVerse 2350 (`2350/software/explorer.pio`) that merges flash and microSD ROMs into a single menu, adds MP3 playback, SCC/SCC+ emulation, and supports on-device search. ***(NEW!)***
-
+- Race condition fix
