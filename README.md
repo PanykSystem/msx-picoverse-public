@@ -12,41 +12,42 @@ PicoVerse is designed as an open-source, independent, and documented MSX cartrid
 
 ## Whats New in PicoVerse?
 
-- New PIO based **MultiROM** firmware for PicoVerse 2040, which allows more reliable ROM loading and better support for edge cases. ***(NEW!)***
-- New PIO based **LoadROM** firmware path for PicoVerse 2350 (`2350/software/loadrom.pio`). ***(NEW!)***
-- PicoVerse 2350 PIO LoadROM firmware now supports SCC/SCC+ emulation with -scc and -sccplus options. Details available in the [MSX PicoVerse 2350 SCC Emulation Guide](/docs/msx-picoverse-2350-scc.md) ***(NEW!)***
-- Updated documentation with platform-specific PIO strategy notes for 2040 and 2350 [MSX PicoVerse 2040 PIO Strategy](/docs/msx-picoverse-2040-pio.md), [MSX PicoVerse 2350 PIO Strategy](/docs/msx-picoverse-2350-pio.md) ***(NEW!)***
+- New Sunrise IDE emulation feature and Nextor support on the RP2040-based cartridge, allowing the USB-C port to function as a Sunrise IDE-compatible hard disk. Full documentation available [here](/docs/msx-picoverse-2040-sunrise-nextor.md) ***(NEW!)***
+- New PIO based **MultiROM** firmware and tool for PicoVerse 2350 (`2350/software/multirom.pio`) with automatic SCC emulation for Konami SCC mappers. ***(NEW!)***
+- New PIO based **Explorer** firmware and tool for PicoVerse 2350 (`2350/software/explorer.pio`) that merges flash and microSD ROMs into a single menu, adds MP3 playback, SCC/SCC+ emulation, and supports on-device search. ***(NEW!)***
 
 ## Project Highlights
+
+- Single-ROM LoadROM workflow for instant and easy booting of one title.
 - Multi-ROM loader with an on-screen menu and mapper auto-detection.
-- Single-ROM LoadROM workflow for instant booting of one title without entering the menu.
 - Explorer firmware (RP2350) merges flash and microSD ROMs, labels the source (FL/SD), adds MP3 playback, and supports on-device search.
 - Ready-made Nextor builds with USB (RP2040) or microSD (RP2350) storage bridges.
-- SCC/SCC+ emulation on the RP2350 LoadROM firmware, with auto-detection and manual forcing options. ***(NEW!)***
+- SCC/SCC+ emulation on the RP2350, with auto-detection and manual forcing options. ***(NEW!)***
 - PC-side tooling that generates UF2 images locally for quick drag-and-drop flashing.
 - BOMs, and production-ready Gerbers.
 - Active development roadmap covering RP2040 and RP2350-based cartridges.
 
 ## Documentation
 
-**MultiROM Guides**
+**LoadROM Guides:** Use the LoadROM tool to create a UF2 image that boots directly into a single ROM, skipping the menu. Mapper type is auto-detected with filename tag overrides, and the tool reports the detected configuration before flashing.
+- [MSX PicoVerse 2040 LoadROM Tool Manual (English)](/docs/msx-picoverse-2040-loadrom-tool-manual.en-us.md)
+- [MSX PicoVerse 2350 LoadROM Tool Manual (English)](/docs/msx-picoverse-2350-loadrom-tool-manual.en-us.md)
+- 
+**MultiROM Guides:** Use the MultiROM tool to create a UF2 image that allows selecting from multiple ROMs at boot. Mapper type is auto-detected with filename tag overrides, and the tool reports the detected configuration before flashing.
 - [PicoVerse 2040 MultiROM Guide Manual (English)](/docs/msx-picoverse-2040-multirom-tool-manual.en-us.md)
 - [PicoVerse 2350 MultiROM Tool Manual (English)](/docs/msx-picoverse-2350-multirom-tool-manual.en-us.md)
 
-**LoadROM Guides**
-- [MSX PicoVerse 2040 LoadROM Tool Manual (English)](/docs/msx-picoverse-2040-loadrom-tool-manual.en-us.md)
-- [MSX PicoVerse 2350 LoadROM Tool Manual (English)](/docs/msx-picoverse-2350-loadrom-tool-manual.en-us.md)
-
-**Explorer Guides** 
+**Explorer Guides:** Use the Explorer tool to manage flash and microSD ROMs, play MP3s, and search for titles on the device.
 - [MSX PicoVerse 2350 Explorer Tool Manual (English)](/docs/msx-picoverse-2350-explorer-tool-manual.en-us.md)
 
-**Reference Material**
+**Reference Material** 
 - [PicoVerse 2040 Features Overview](/docs/msx-picoverse-2040-features.md)
 - [PicoVerse 2350 Features Overview](/docs/msx-picoverse-2350-features.md)
-- [MSX PicoVerse 2040 PIO Strategy](/docs/msx-picoverse-2040-pio.md) ***(NEW!)***
-- [MSX PicoVerse 2350 PIO Strategy](/docs/msx-picoverse-2350-pio.md) ***(NEW!)***
-- [MSX PicoVerse 2350 SCC Emulation Guide](/docs/msx-picoverse-2350-scc.md) ***(NEW!)***
+- [MSX PicoVerse 2040 PIO Strategy](/docs/msx-picoverse-2040-pio.md) 
+- [MSX PicoVerse 2350 PIO Strategy](/docs/msx-picoverse-2350-pio.md) 
+- [MSX PicoVerse 2350 SCC Emulation Guide](/docs/msx-picoverse-2350-scc.md)
 - [Nextor Pico Bridge Protocol](/docs/Nextor-Pico-Bridge-Protocol.md)
+- [MSX PicoVerse 2040 Sunrise IDE Emulation for Nextor](/docs/msx-picoverse-2040-sunrise-nextor.md) ***(NEW!)***
 
 ## Hardware Variants
 
@@ -76,7 +77,6 @@ Interactive BOM available at [PicoVerse 2040 BOM](https://htmlpreview.github.io/
 | D1 | 1N5819 SOD-123 Diode | 1 | [AliExpress](https://s.click.aliexpress.com/e/_c4WEKCuz) |
 | Q1, Q2, Q3, Q4, Q5 | BSS138 SOT-23 Transistor | 5 | [AliExpress](https://s.click.aliexpress.com/e/_c2veWxcD)|
 
-
 ### PicoVerse 2350 Cartridge
 
 | Prototype PCB (front) | Prototype PCB (back) |
@@ -85,7 +85,7 @@ Interactive BOM available at [PicoVerse 2040 BOM](https://htmlpreview.github.io/
 
 - Targets RP2350 boards exposing all 48 GPIO pins (not compatible with standard Pico 2 boards).
 - Adds microSD storage, ESP8266 WiFi header, and I2S audio expansion alongside 16 MB flash space.
-- Extra RAM to support advanced emulation features in future firmware releases.
+- Extra RAM (PSRAM) to support advanced emulation features in future firmware releases.
 - Explorer firmware can load ROMs from both flash and microSD, with source labels and search.
 - Shares the same ROM mapper support list as the 2040 build.
 
@@ -156,6 +156,10 @@ The LoadROM tool targets situations where you want the PicoVerse to behave like 
       - `2350/software/loadrom/tool` (legacy bit-banged firmware), or
       - `2350/software/loadrom.pio/tool` (PIO-based firmware, recommended).
    2. Run `loadrom.exe -o mygame.uf2 \\path\\to\\Game.ROM` (the tool also accepts drag-and-drop onto the EXE).
+      - SCC standard emulation: `loadrom.exe -scc \\path\\to\\Game.ROM`
+      - SCC+ enhanced emulation: `loadrom.exe -sccplus \\path\\to\\Game.ROM`
+      - `-scc` and `-sccplus` are mutually exclusive.
+      - SCC/SCC+ options are supported only in `2350/software/loadrom.pio/tool` (PIO firmware path), not in legacy `2350/software/loadrom/tool`.
    3. Observe the reported ROM name, size, mapper status (auto vs forced), and Pico offset before the UF2 is written.
    4. Put the Pico into BOOTSEL mode and copy the generated UF2 to the `RPI-RP2` drive.
    5. Insert the cartridge into your MSX—on power-up the embedded game launches immediately.
@@ -181,14 +185,23 @@ A search function is available by pressing `/` in the menu. Type part of a ROM n
 
 ## Compatibility & Requirements
 - Works with MSX, MSX2, MSX2+, and MSX TurboR systems. Mapper support covers the most common game and utility formats.
-- Requires Windows or Linux to run the PC-side UF2 builder utilities.
+- Requires Windows OS to run the PC-side UF2 builder utilities.
 - Ensure your development board matches the pinout documented for each hardware revision before soldering.
 
-## License & Usage
+## License, Copyright notes & Usage
 
 ![Creative Commons Attribution-NonCommercial-ShareAlike 4.0](/images/ccans.png)
 
 All hardware and firmware binaries in this repository are released under the Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International license. Personal builds and community tinkering are encouraged, but commercial use or resale requires explicit authorization from the author.
 
+**bios.h** is used on all MSX menus and was adapted from http://www.konamiman.com/msx/msx2th/th-ap.txt by Danilo Angelo, 2020. The original text file is licensed under CC0 1.0 Universal (public domain). The adapted bios.h file in this repository is also released under CC0 1.0 Universal, allowing for free use and modification without restrictions.
+
+**msxromcrt0.s** is used on Nextor C implementation and was adapted by S0urceror, 2022, from the crt0.s file available in FusionC v2.0. The original crt0.s file is licensed under the MIT License. The adapted msxromcrt0.s file in this repository is also released under the MIT License, permitting free use, modification, and distribution with proper attribution.
+
+**emu2212.c** and **emu2212.h** used to implement SCC and SCC+ emulation are copyright by Mitsutaka Okazaki 2014 and licensed under the MIT License, allowing for free use, modification, and distribution with proper attribution. [emu2212 @ Digital Sound Antiques](https://github.com/digital-sound-antiques/emu2212)
+
+**emu2149.c** and **emu2149.h** used to implement AY-3-8910 emulation are copyright by Mitsutaka Okazaki 2014 and licensed under the MIT License, allowing for free use, modification, and distribution with proper attribution. [emu2149 @ Digital Sound Antiques](https://github.com/digital-sound-antiques/emu2149)
+
 ## Feedback & Community
+
 Questions, test reports, and build photos are welcome. Open an issue on the public repository or reach out through the MSX retro hardware forums where PicoVerse updates are posted.

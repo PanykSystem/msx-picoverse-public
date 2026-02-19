@@ -61,6 +61,10 @@ The tool analyzes each ROM to determine the correct mapper type. If detection fa
 Supported tags:
 `PL-16`, `PL-32`, `KonSCC`, `Linear`, `ASC-08`, `ASC-16`, `Konami`, `NEO-8`, `NEO-16`.
 
+SCC behavior:
+- ROMs detected or forced as `KonSCC` (mapper 3) automatically run with SCC sound emulation in the MultiROM firmware.
+- If a `KonSCC` entry carries the SCC+ mapper flag in its metadata, SCC+ (enhanced) mode is used automatically.
+
 Example:
 
 ```
@@ -78,7 +82,8 @@ Knight Mare.PL-32.ROM
 
 - Only ROM files in the current folder are included (no subfolders).
 - Unsupported or invalid ROMs are skipped.
+- Konami SCC mapper entries (`KonSCC`) do not require an extra runtime option in MultiROM; SCC emulation is enabled automatically.
 - The `-n` Nextor option is experimental and may not work on all MSX2 models.
 
 Author: Cristiano Almeida Goncalves
-Last updated: 01/25/2026
+Last updated: 02/16/2026

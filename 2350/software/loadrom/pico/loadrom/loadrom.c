@@ -851,7 +851,7 @@ int __no_inline_not_in_flash_func(main)()
 {
     // Set up the QMI 
     qmi_hw->m[0].timing = 0x40000202; // Set the QMI timing for the MSX bus
-    set_sys_clock_khz(285000, true);     // Set system clock to 285Mhz
+    set_sys_clock_khz(250000, true);     // Set system clock to 285Mhz
 
     // Initialize stdio
     stdio_init_all();

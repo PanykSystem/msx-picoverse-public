@@ -25,6 +25,7 @@
 #include <ctype.h>
 #include "uf2format.h"
 #include "loadrom.h"
+#include "nextor_sunrise.h"
 
 #ifndef APP_VERSION
 #define APP_VERSION "v1.0"
@@ -45,7 +46,7 @@
 uint32_t file_size(const char *filename);
 uint8_t detect_rom_type(const char *filename, uint32_t size);
 void write_padding(FILE *file, size_t current_size, size_t target_size, uint8_t padding_byte);
-void create_uf2_file(const char *rom_filename, uint32_t rom_size, uint8_t rom_type,
+void create_uf2_file(const char *rom_filename, const uint8_t *embedded_rom, uint32_t rom_size, uint8_t rom_type,
                      const char *rom_name, uint32_t base_offset, const char *uf2_filename);
 
 static const char *MAPPER_DESCRIPTIONS[] = {
@@ -63,8 +64,11 @@ static const char *rom_types[] = {
     "ASCII16",
     "Konami",
     "NEO8",
-    "NEO16"
+    "NEO16",
+    "Sunrise"
 };
+
+#define ROM_TYPE_SUNRISE 10
 
 #define MAPPER_DESCRIPTION_COUNT (sizeof(MAPPER_DESCRIPTIONS) / sizeof(MAPPER_DESCRIPTIONS[0]))
 
@@ -285,10 +289,11 @@ uint8_t detect_rom_type(const char *filename, uint32_t size) {
 // Print usage information
 static void print_usage(const char *prog_name) {
 
-    printf("Usage: %s [-h] [-o <filename>] <romfile>\n", prog_name);
+    printf("Usage: %s [-h] [-s] [-o <filename>] [romfile]\n", prog_name);
     printf("\n");
     printf("Options:\n");
     printf("  -h, --help Show this help message\n");
+    printf("  -s, --sunrise Build UF2 with embedded Sunrise IDE Nextor ROM\n");
     printf("  -o <filename>, --output <filename>  Set UF2 output filename (default %s)\n", UF2FILENAME);
     printf("\n");
     printf("Mapper forcing: append tags (case-insensitive) before the ROM extension.\n");
@@ -298,9 +303,14 @@ static void print_usage(const char *prog_name) {
 // create_uf2_file - Create the UF2 file
 // This function streams the firmware binary, a single configuration record, and the ROM payload into UF2 blocks.
 
-void create_uf2_file(const char *rom_filename, uint32_t rom_size, uint8_t rom_type,
+void create_uf2_file(const char *rom_filename, const uint8_t *embedded_rom, uint32_t rom_size, uint8_t rom_type,
                      const char *rom_name, uint32_t base_offset, const char *uf2_filename) {
-    if (!rom_filename || !rom_name || rom_size == 0) {
+    if (!rom_name || rom_size == 0) {
+        printf("Invalid parameters provided for UF2 generation.\n");
+        return;
+    }
+
+    if (!rom_filename && !embedded_rom) {
         printf("Invalid parameters provided for UF2 generation.\n");
         return;
     }
@@ -318,16 +328,21 @@ void create_uf2_file(const char *rom_filename, uint32_t rom_size, uint8_t rom_ty
     cursor += sizeof(rom_size);
     memcpy(config_record + cursor, &base_offset, sizeof(base_offset));
 
-    FILE *rom_file = fopen(rom_filename, "rb");
-    if (!rom_file) {
-        perror("Failed to open ROM file for UF2 creation");
-        return;
+    FILE *rom_file = NULL;
+    if (rom_filename) {
+        rom_file = fopen(rom_filename, "rb");
+        if (!rom_file) {
+            perror("Failed to open ROM file for UF2 creation");
+            return;
+        }
     }
 
     FILE *uf2_file = fopen(uf2_filename, "wb");
     if (!uf2_file) {
         perror("Failed to create UF2 file");
-        fclose(rom_file);
+        if (rom_file) {
+            fclose(rom_file);
+        }
         return;
     }
 
@@ -373,14 +388,22 @@ void create_uf2_file(const char *rom_filename, uint32_t rom_size, uint8_t rom_ty
                 if (remaining == 0) {
                     break;
                 }
-                size_t request = remaining < (bl.payloadSize - chunk_filled) ? remaining : (bl.payloadSize - chunk_filled);
-                size_t read_now = fread(bl.data + chunk_filled, 1, request, rom_file);
-                if (read_now != request) {
-                    printf("Failed to read ROM data while building UF2 file.\n");
-                    goto cleanup;
+
+                if (rom_file) {
+                    size_t request = remaining < (bl.payloadSize - chunk_filled) ? remaining : (bl.payloadSize - chunk_filled);
+                    size_t read_now = fread(bl.data + chunk_filled, 1, request, rom_file);
+                    if (read_now != request) {
+                        printf("Failed to read ROM data while building UF2 file.\n");
+                        goto cleanup;
+                    }
+                    rom_bytes_written += read_now;
+                    to_copy = read_now;
+                } else {
+                    size_t to_embed = remaining < (bl.payloadSize - chunk_filled) ? remaining : (bl.payloadSize - chunk_filled);
+                    memcpy(bl.data + chunk_filled, embedded_rom + rom_bytes_written, to_embed);
+                    rom_bytes_written += to_embed;
+                    to_copy = to_embed;
                 }
-                rom_bytes_written += read_now;
-                to_copy = read_now;
             }
 
             chunk_filled += to_copy;
@@ -398,7 +421,9 @@ void create_uf2_file(const char *rom_filename, uint32_t rom_size, uint8_t rom_ty
     success = true;
 
 cleanup:
-    fclose(rom_file);
+    if (rom_file) {
+        fclose(rom_file);
+    }
     fclose(uf2_file);
 
     if (success) {
@@ -414,11 +439,14 @@ int main(int argc, char *argv[])
 
     const char *output_filename = UF2FILENAME;
     const char *rom_filename = NULL;
+    bool use_sunrise = false;
 
     for (int i = 1; i < argc; ++i) {
         if ((strcmp(argv[i], "-h") == 0) || (strcmp(argv[i], "--help") == 0)) {
             print_usage(argv[0]);
             return 0;
+        } else if ((strcmp(argv[i], "-s") == 0) || (strcmp(argv[i], "--sunrise") == 0)) {
+            use_sunrise = true;
         } else if ((strcmp(argv[i], "-o") == 0) || (strcmp(argv[i], "--output") == 0)) {
             if (i + 1 >= argc) {
                 printf("Option -o/--output requires a filename.\n");
@@ -434,6 +462,33 @@ int main(int argc, char *argv[])
             printf("Unexpected argument: %s\n", argv[i]);
             return 1;
         }
+    }
+
+    if (use_sunrise) {
+        if (rom_filename) {
+            printf("The -s/--sunrise option does not accept an external ROM file.\n");
+            return 1;
+        }
+
+        const uint8_t *sunrise_rom = ___nextor_kernel_Nextor_2_1_4_SunriseIDE_MasterOnly_ROM;
+        uint32_t sunrise_rom_size = (uint32_t)___nextor_kernel_Nextor_2_1_4_SunriseIDE_MasterOnly_ROM_len;
+        uint8_t rom_type = ROM_TYPE_SUNRISE;
+        uint32_t base_offset = CONFIG_RECORD_SIZE;
+        const char *sunrise_name = "Nextor Sunrise IDE";
+
+        if (sunrise_rom_size == 0) {
+            printf("Embedded Sunrise IDE Nextor ROM payload is empty.\n");
+            return 1;
+        }
+
+        printf("ROM Type: %s [Embedded]\n", rom_types[rom_type]);
+        printf("ROM Name: %s\n", sunrise_name);
+        printf("ROM Size: %u bytes\n", sunrise_rom_size);
+        printf("Pico Offset: 0x%08X\n", base_offset);
+        printf("UF2 Output: %s\n", output_filename);
+
+        create_uf2_file(NULL, sunrise_rom, sunrise_rom_size, rom_type, sunrise_name, base_offset, output_filename);
+        return 0;
     }
 
     if (!rom_filename) {
@@ -526,6 +581,6 @@ int main(int argc, char *argv[])
     printf("Pico Offset: 0x%08X\n", base_offset);
     printf("UF2 Output: %s\n", output_filename);
 
-    create_uf2_file(rom_filename, rom_size, rom_type, rom_name, base_offset, output_filename);
+    create_uf2_file(rom_filename, NULL, rom_size, rom_type, rom_name, base_offset, output_filename);
     return 0;
 }

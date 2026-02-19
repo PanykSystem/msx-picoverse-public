@@ -18,11 +18,13 @@
 
 #include <string.h>
 #include "pico/stdlib.h"
+#include "pico/multicore.h"
 #include "hardware/clocks.h"
 #include "hardware/dma.h"
 #include "hardware/pio.h"
 #include "hardware/sync.h"
 #include "loadrom.h"
+#include "sunrise_ide.h"
 #include "msx_bus.pio.h"
 
 // -----------------------------------------------------------------------
@@ -456,6 +458,110 @@ void __no_inline_not_in_flash_func(loadrom_konami)(uint32_t offset, bool cache_e
 }
 
 // -----------------------------------------------------------------------
+// Sunrise IDE write handler (cReg mapper at 0x4104 + IDE registers)
+// -----------------------------------------------------------------------
+typedef struct {
+    sunrise_ide_t *ide;
+} sunrise_ctx_t;
+
+static inline void __not_in_flash_func(handle_sunrise_write)(uint16_t addr, uint8_t data, void *ctx)
+{
+    sunrise_ctx_t *sctx = (sunrise_ctx_t *)ctx;
+
+    // IDE register / control writes (0x4104, 0x7C00-0x7DFF, 0x7E00-0x7EFF)
+    if (addr >= 0x4000u && addr <= 0x7FFFu)
+    {
+        sunrise_ide_handle_write(sctx->ide, addr, data);
+    }
+}
+
+// -----------------------------------------------------------------------
+// loadrom_sunrise - Sunrise IDE Nextor ROM with emulated IDE interface
+// -----------------------------------------------------------------------
+// Uses the Sunrise IDE mapper: a single 16KB ROM window at 0x4000-0x7FFF
+// with page selection via the control register at 0x4104 (bits 7:5 = page).
+// No ROM at 0x8000-0xBFFF — the MSX provides its own RAM there.
+// IDE register overlay when bit 0 of the control register is set:
+//   - 0x7C00-0x7DFF = 16-bit data register (low/high byte latch)
+//   - 0x7E00-0x7EFF = ATA task-file registers (mirrored every 16 bytes)
+//   - 0x7F00-0x7FFF = ROM data (excluded from IDE space)
+// ATA commands are translated to USB MSC operations on Core 1.
+void __no_inline_not_in_flash_func(loadrom_sunrise)(uint32_t offset, bool cache_enable)
+{
+    const uint8_t *rom_base;
+    uint32_t available_length;
+    prepare_rom_source(offset, cache_enable, 0u, &rom_base, &available_length);
+
+    // Initialise Sunrise IDE state
+    static sunrise_ide_t ide;
+    sunrise_ide_init(&ide);
+
+    // Share IDE context with Core 1 and launch USB host task
+    sunrise_usb_set_ide_ctx(&ide);
+    multicore_launch_core1(sunrise_usb_task);
+
+    // Initialise PIO bus engine
+    msx_pio_bus_init();
+
+    sunrise_ctx_t ctx = { .ide = &ide };
+
+    // Main loop: service PIO read/write events
+    //
+    // Unlike other mapper loops, the Sunrise IDE requires continuous write
+    // draining.  Each ATA command involves a burst of 8-9 writes (bank
+    // switch + IDE_ON + 6 task-file registers + command) with no
+    // intervening reads.  The PIO write SM FIFO is 8 entries deep
+    // (joined).  If we block on the read FIFO without draining writes,
+    // the FIFO can overflow and the SM stalls, silently dropping writes.
+    // A lost command or LBA register write causes data corruption.
+    //
+    // The fix: poll both FIFOs in a tight loop so writes are drained
+    // continuously — even while waiting for the next read event.
+    while (true)
+    {
+        uint16_t addr;
+
+        // Poll: drain write FIFO while waiting for a read event
+        while (true)
+        {
+            pio_drain_writes(handle_sunrise_write, &ctx);
+            if (!pio_sm_is_rx_fifo_empty(msx_bus.pio, msx_bus.sm_read))
+            {
+                addr = (uint16_t)pio_sm_get(msx_bus.pio, msx_bus.sm_read);
+                break;
+            }
+        }
+
+        // Drain any writes that arrived alongside the read
+        pio_drain_writes(handle_sunrise_write, &ctx);
+
+        // Sunrise IDE ROM is only at 0x4000-0x7FFF (one 16KB window)
+        bool in_window = (addr >= 0x4000u) && (addr <= 0x7FFFu);
+        uint8_t data = 0xFFu;
+
+        if (in_window)
+        {
+            // Check if IDE intercepts this read (0x7C00-0x7EFF when enabled)
+            uint8_t ide_data;
+            if (sunrise_ide_handle_read(&ide, addr, &ide_data))
+            {
+                data = ide_data;
+            }
+            else
+            {
+                // Sunrise mapper: page selected by ide.segment (cReg bits 7:5)
+                uint8_t seg = ide.segment;
+                uint32_t rel = ((uint32_t)seg << 14) + (addr & 0x3FFFu);
+                if (available_length == 0u || rel < available_length)
+                    data = read_rom_byte(rom_base, rel);
+            }
+        }
+
+        pio_sm_put_blocking(msx_bus.pio, msx_bus.sm_read, pio_build_token(in_window, data));
+    }
+}
+
+// -----------------------------------------------------------------------
 // loadrom_ascii8 - ASCII8 mapper
 // -----------------------------------------------------------------------
 // 8KB banks: 4000-5FFF, 6000-7FFF, 8000-9FFF, A000-BFFF
@@ -624,6 +730,7 @@ int __no_inline_not_in_flash_func(main)()
     // 7 - Konami (without SCC) ROM
     // 8 - NEO8 ROM
     // 9 - NEO16 ROM
+    // 10 - Sunrise IDE Nextor ROM (Konami mapper)
     switch (rom_type) 
     {
         case 1:
@@ -650,6 +757,9 @@ int __no_inline_not_in_flash_func(main)()
             break;
         case 9:
             loadrom_neo16(ROM_RECORD_SIZE);
+            break;
+        case 10:
+            loadrom_sunrise(ROM_RECORD_SIZE, true);
             break;
         default:
             break;

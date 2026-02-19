@@ -705,7 +705,7 @@ int __no_inline_not_in_flash_func(main)()
 {
     // Keep existing RP2350 flash timing setup.
     qmi_hw->m[0].timing = 0x40000202;
-    set_sys_clock_khz(285000, true);
+    set_sys_clock_khz(250000, true);
 
     setup_gpio();
 

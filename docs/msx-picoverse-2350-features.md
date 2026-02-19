@@ -24,3 +24,4 @@ The MSX PicoVerse 2350 is a Raspberry Pi Pico 2350-based MSX-compatible cartridg
 - **Compact Design**: The cartridge is designed to fit seamlessly into MSX systems without adding bulk.
 - **SD Card Slot**: Equipped with an SD card slot for easy storage and transfer of ROMs and files.
 - **Audio Profile Selection**: Allows users to select different audio profiles for enhanced sound compatibility with various MSX models. ``Audio profiles are under development and may not work as expected on all MSX models.``
+- **SCC/SCC+ Emulation**: When enabled for Konami SCC mapper ROMs, the cartridge can emulate the SCC and SCC+ sound chips in hardware, providing accurate audio output through an I2S DAC connected to the RP2350. This allows games that use SCC or SCC+ sound to have their full soundtrack without requiring an original SCC cartridge. For details on supported registers and behavior, see the [SCC/SCC+ documentation](docs/msx-picoverse-2350-scc.md).

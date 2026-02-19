@@ -49,7 +49,10 @@ pico_sdk_init()
 
 # Add executable. Default name is the project name, version 0.1
 
-add_executable(loadrom loadrom.c )
+add_executable(loadrom 
+    ${PICO_SDK_PATH}/lib/tinyusb/src/tusb.c
+    loadrom.c 
+    sunrise_ide.c )
 
 pico_generate_pio_header(loadrom ${CMAKE_CURRENT_LIST_DIR}/msx_bus.pio)
 
@@ -63,8 +66,11 @@ pico_enable_stdio_usb(loadrom 0)
 # Add the standard library to the build
 target_link_libraries(loadrom
         pico_stdlib
+        pico_multicore
         hardware_dma
-        hardware_pio)
+        hardware_pio
+        tinyusb_board
+        tinyusb_host)
 
 # Add the standard include files to the build
 target_include_directories(loadrom PRIVATE
