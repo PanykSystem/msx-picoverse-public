@@ -7,10 +7,13 @@ This document describes the implementation of the Sunrise IDE interface emulatio
 The MSX PicoVerse 2040 Sunrise IDE emulation provides a complete implementation of the Sunrise MSX IDE interface, allowing the MSX to boot Nextor DOS and access USB mass storage devices through the RP2040's USB-C port. The implementation:
 
 - Emulates the Sunrise IDE FlashROM mapper (128 KB, 8 × 16 KB pages)
+- In mapper mode (`-m` / mapper type `11`), adds 192KB memory mapper RAM (12 x 16KB pages)
 - Emulates the full ATA task-file register set
 - Translates ATA sector read/write commands into USB Mass Storage Class (MSC) Bulk-Only Transport operations
 - Runs the Nextor 2.1.4 Sunrise IDE driver (Master Only edition)
 - Uses the RP2040's dual-core architecture for deterministic bus timing
+
+Note: The 128KB value above refers to the Sunrise/Nextor ROM image itself. The optional mapper mode adds a separate 192KB RAM mapper region for Nextor compatibility.
 
 ## 2. The Original Sunrise IDE Hardware
 
@@ -570,7 +573,7 @@ The Nextor 2.1.4 Sunrise IDE (Master Only) ROM is embedded directly in the loadr
 - **Source file**: `nextor_sunrise.h` (generated via `xxd` from the ROM file)
 - **ROM file**: `Nextor-2.1.4.SunriseIDE.MasterOnly.ROM`
 - **Size**: 131,072 bytes (128 KB, exactly 8 × 16 KB pages)
-- **ROM type**: 10 (`ROM_TYPE_SUNRISE`)
+- **ROM type**: 10 (`ROM_TYPE_SUNRISE`) for standard Sunrise mode, 11 for Sunrise + 192KB mapper mode
 
 The tool creates a UF2 file with a configuration record containing:
 - ROM name: `"Nextor Sunrise IDE"` (up to 50 chars, padded)
@@ -578,7 +581,7 @@ The tool creates a UF2 file with a configuration record containing:
 - ROM size: `131072`
 - ROM data: The full 128 KB ROM
 
-The firmware's `main()` reads the rom_type byte and dispatches to `loadrom_sunrise()` when type = 10.
+The firmware's `main()` reads the rom_type byte and dispatches to `loadrom_sunrise()` when type = 10, or `loadrom_sunrise_mapper()` when type = 11.
 
 ## 14. LoadROM Tool Usage
 
@@ -660,4 +663,4 @@ target_link_libraries(loadrom
 All paths are relative to `2040/software/loadrom.pio/`.
 
 Author: Cristiano Goncalves
-Last updated: 02/18/2026
+Last updated: 02/22/2026

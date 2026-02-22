@@ -84,6 +84,8 @@ Supported mappers in PIO paths include:
 - Konami
 - ASCII8 / ASCII16
 - NEO8 / NEO16
+- Sunrise IDE Nextor (type 10)
+- Sunrise IDE Nextor + 192KB mapper (type 11)
 
 ---
 
@@ -94,7 +96,7 @@ Supported mappers in PIO paths include:
 | Runtime | Single ROM from one record | Menu ROM first, then selected ROM from record table |
 | Menu monitor write | N/A | Captured through `SM1` to detect selected entry |
 | Lifecycle | One main flow | Re-initializes SM/FIFO state between menu and selected-ROM phases |
-| Mapper set | 1..9 | 1..10 (`10` uses dedicated Nextor bridge path) |
+| Mapper set | 1..11 | 1..11 (`10` = Sunrise IDE Nextor, `11` = Sunrise IDE Nextor + 192KB mapper) |
 
 ---
 
@@ -109,4 +111,4 @@ Both RP2040 PIO firmware targets require:
 ---
 
 Cristiano Goncalves  
-02/15/26
+02/22/26

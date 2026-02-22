@@ -826,6 +826,17 @@ void __no_inline_not_in_flash_func(loadrom_sunrise_mapper)(uint32_t offset, bool
 {
     (void)cache_enable;
 
+    // ---------------------------------------------------------------
+    // Hold the MSX bus with WAIT while we initialise the mapper.
+    // On power-on the BIOS starts probing slots immediately.
+    // We must freeze the CPU until the PIO engines, mapper RAM and I/O
+    // port handlers are all ready, otherwise the BIOS probe races
+    // against our initialisation and fails to detect the 192KB mapper.
+    // ---------------------------------------------------------------
+    gpio_init(PIN_WAIT);
+    gpio_set_dir(PIN_WAIT, GPIO_OUT);
+    gpio_put(PIN_WAIT, 0);            // Assert WAIT — freeze MSX bus
+
     // Mapper mode: disable ROM cache and reserve full SRAM for mapper RAM.
     rom_cache_capacity = 0u;
 
@@ -856,9 +867,14 @@ void __no_inline_not_in_flash_func(loadrom_sunrise_mapper)(uint32_t offset, bool
     // Clear mapper RAM
     memset(mapper_ram, 0xFF, MAPPER_SIZE);
 
-    // Initialise PIO bus engines
-    msx_pio_bus_init();
+    // Initialise PIO I/O bus FIRST (mapper port handlers must be ready
+    // before the memory bus releases WAIT and the BIOS starts probing).
     msx_pio_io_bus_init();
+
+    // Initialise PIO memory bus — this hands PIN_WAIT back to the PIO
+    // read SM whose first instruction uses "side 1" (WAIT released),
+    // so the MSX resumes execution with everything fully initialised.
+    msx_pio_bus_init();
 
     sunrise_ctx_t ctx = { .ide = &ide };
 
@@ -909,19 +925,13 @@ void __no_inline_not_in_flash_func(loadrom_sunrise_mapper)(uint32_t offset, bool
         }
 
         // --- Drain I/O writes (mapper page registers FC-FF) ---
+        // I/O ports are global (not slot-dependent), so the mapper must
+        // always track writes to FC-FF regardless of subslot selection.
         {
             uint16_t io_addr;
             uint8_t io_data;
             while (pio_try_get_io_write(&io_addr, &io_data))
             {
-                // Nextor MAP_INIT tests mapper RAM in page 2 (0x8000-0xBFFF)
-                // while switching mapper segments with OUT (0xFC-0xFF),A.
-                // Expose mapper ports only when page 2 is mapped to mapper
-                // sub-slot 1, to emulate slot-dependent visibility.
-                uint8_t page2_subslot = (subslot_reg >> 4) & 0x03u;
-                if (page2_subslot != 1u)
-                    continue;
-
                 uint8_t port = io_addr & 0xFFu;
                 if (port >= 0xFCu && port <= 0xFFu)
                 {
@@ -931,16 +941,17 @@ void __no_inline_not_in_flash_func(loadrom_sunrise_mapper)(uint32_t offset, bool
         }
 
         // --- Handle I/O reads (mapper page registers FC-FF) ---
+        // I/O ports are global (not slot-dependent), so the mapper must
+        // always respond to FC-FF reads regardless of subslot selection.
         {
             uint16_t io_addr;
             while (pio_try_get_io_read(&io_addr))
             {
-                uint8_t page2_subslot = (subslot_reg >> 4) & 0x03u;
                 uint8_t port = io_addr & 0xFFu;
                 bool in_window = false;
                 uint8_t data = 0xFFu;
 
-                if (page2_subslot == 1u && port >= 0xFCu && port <= 0xFFu)
+                if (port >= 0xFCu && port <= 0xFFu)
                 {
                     in_window = true;
                     data = (uint8_t)(0xF0u | (mapper_reg[port - 0xFCu] & 0x0Fu));

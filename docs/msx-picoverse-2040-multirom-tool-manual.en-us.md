@@ -41,7 +41,7 @@ ROM file names are used to name the entries in the MSX menu. There is a limit of
 
 > **Note:** To use a USB thumdrive you may need a OTG adapter or cable. That can be used to convert the USB-C port to a standard USB-A female port.
 
-> **Note:** The `-s` option includes the Sunrise IDE Nextor ROM, and the `-m` option includes Sunrise IDE Nextor with 192KB mapper support. Both provide USB mass-storage support via the cartridge's USB-C port and work on MSX1, MSX2, and MSX2+ systems.
+> **Note:** The `-s` option includes Sunrise IDE Nextor, and the `-m` option includes Sunrise IDE Nextor plus an additional 192KB mapper implementation. Both provide USB mass-storage support via the cartridge's USB-C port and work on MSX1, MSX2, and MSX2+ systems.
 
 ## Command-line usage
 
@@ -55,7 +55,7 @@ multirom.exe [options]
 
 ### Options:
 - `-s`, `--sunrise` : Includes the embedded Sunrise IDE Nextor ROM for USB mass-storage support. The cartridge's USB-C port can be used as a block device with Nextor-compatible loaders like SofaRun.
-- `-m`, `--mapper` : Includes the embedded Sunrise IDE Nextor ROM with 192KB mapper support. In the MSX menu this entry is still shown with mapper text `SYSTEM`.
+- `-m`, `--mapper` : Includes the embedded Sunrise IDE Nextor ROM with 192KB mapper support (12 x 16KB pages). In the MSX menu this entry is still shown with mapper text `SYSTEM`.
 - `-h`, `--help`   : Show usage help and exit.
 - `-o <filename>`, `--output <filename>` : Set UF2 output filename (default is `multirom.uf2`).
 - If you need to force a specific mapper type for a ROM file, you can append a mapper tag before the `.ROM` extension in the filename. The tag is case-insensitive. For example, naming a file `Knight Mare.PL-32.ROM` forces the use of the PL-32 mapper for that ROM. Tags like `SYSTEM` and `MAPPER` are ignored. The list of possible tags that can be used is: `PL-16,  PL-32,  KonSCC,  Linear,  ASC-08,  ASC-16,  Konami,  NEO-8,  NEO-16`
@@ -105,7 +105,7 @@ At any time while in the menu, you can press H key read the help screen with bas
 
 ## Using Nextor with the PicoVerse 2040 cartridge
 
-The `-s` option of the multirom tool includes Sunrise IDE Nextor ROM, and the `-m` option includes Sunrise IDE Nextor ROM with 192KB mapper support. When the multirom UF2 is flashed with either option, the Pico's USB-C port exposes a block device that Nextor-compatible loaders (such as SofaRun) can use to load ROMs, DSK files, and other media from a connected USB thumb drive.
+The `-s` option of the multirom tool includes Sunrise IDE Nextor ROM, and the `-m` option includes Sunrise IDE Nextor ROM plus an additional 192KB mapper implementation. When the multirom UF2 is flashed with either option, the Pico's USB-C port exposes a block device that Nextor-compatible loaders (such as SofaRun) can use to load ROMs, DSK files, and other media from a connected USB thumb drive.
 
 The Sunrise IDE implementation uses ATA register emulation, making it compatible with a wide range of MSX systems including MSX1, MSX2, and MSX2+ models. 
 
@@ -191,4 +191,4 @@ Sunrise IDE Nextor ROM (options `-s` and `-m`) has been tested on the following 
 | Yamaha YIS604 | MSX1 | OK | Verified operation |
 
 Author: Cristiano Almeida Goncalves
-Last updated: 02/21/2026
+Last updated: 02/22/2026

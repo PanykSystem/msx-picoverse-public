@@ -113,13 +113,6 @@ int putchar (int character)
     return character;
 }
 
-// execute_rst00 - Execute the RST 00h instruction to reset the MSX computer
-void execute_rst00() {
-    __asm
-        rst 0x00
-    __endasm;
-}
-
 void clear_screen_0() {
     __asm
     ld      a, #0            ; Set SCREEN 0 mode
@@ -489,15 +482,45 @@ void helpMenu()
     navigateMenu();
 }
 
+
+void msx_warm_reboot(void)
+{
+    __asm
+        di
+        rst  0x0000    
+    __endasm;
+}
+
+// msx_cold_reboot - Disable warm boot on MSX2+ by manipulating port F4
+// This forces a cold boot on the next reset, making the MSX show the full startup screen.
+// Based on the Carnivore2 reset sequence.
+void msx_cold_reboot(void)
+{
+    __asm
+        di
+        in	    a,(#0xF4)		; read from F4 port on MSX2+
+	    or	    #0x80         ; set bit 7 to disable warm boot
+	    out	    (#0xF4),a		; avoid "warm" reset on MSX2+
+        rst     0x0000    
+    __endasm;
+}
+
 // loadGame - Load the game from the flash memory
 // This function will load the game from the flash memory based on the index. 
+// For Nextor/SYSTEM ROMs (mapper 10 and 11), it performs a Carnivore2-style cold reboot
+// that forces the MSX to show the full startup screen.
 void loadGame(int index) 
 {
     if (records[index].Mapper != 0)
     {
         Poke(ROM_SELECT_REGISTER, index); // Set the game index
-        execute_rst00(); // Execute RST 00h to reset the MSX computer and load the game
-        execute_rst00();
+
+        // For Nextor/SYSTEM ROMs, perform a cold reboot (Carnivore2 style)
+        if (records[index].Mapper == 10 || records[index].Mapper == 11)
+        {
+            msx_cold_reboot();
+        }
+        else msx_warm_reboot(); // Execute RST 00h to reset the MSX computer and load the game
     }
 }
 
@@ -513,12 +536,6 @@ void navigateMenu()
     {
         //debug
         Locate(0, 23);
-        //printf("Key: %3d", key);
-        //printf("Size: %05lu/15872", totalSize/1024);
-        //debug
-        //Locate(20, 23);
-        //printf("Memory Mapper: Off");
-        //printf("CPage: %2d Index: %2d", currentPage, currentIndex);
         unsigned int currentRow = (currentIndex%FILES_PER_PAGE) + 2;
 
         key = wait_for_key_with_scroll(records[currentIndex].Name, currentRow);

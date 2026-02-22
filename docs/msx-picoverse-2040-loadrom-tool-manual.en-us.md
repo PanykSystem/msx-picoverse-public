@@ -4,7 +4,14 @@ The PicoVerse 2040 cartridge extends MSX systems by flashing different Raspberry
 
 `loadrom.exe` bundles the Pico firmware, a configuration record (game name, mapper code, ROM size and offset), and a single MSX ROM payload into an RP2040-compatible UF2 image. Copying the generated UF2 to the Pico’s `RPI-RP2` drive programs the cartridge so that it boots directly into the embedded ROM whenever the MSX starts.
 Alternatively, the `-s` (Sunrise) option can be used to flash the cartridge with the Sunrise IDE Nextor firmware, which exposes the USB-C port as a block device for use with Nextor-compatible loaders like SofaRun.
-The `-m` option flashes Sunrise IDE Nextor with an additional 192KB memory mapper implementation. On-screen mapper text for this mode is still presented as `SYSTEM` for end users.
+The `-m` option flashes Sunrise IDE Nextor with an additional 192KB memory mapper implementation. In the firmware internals this is mapper mode (type `11`), while on-screen mapper text is still presented as `SYSTEM` for end users.
+
+### Nextor option matrix
+
+| Option | Nextor ROM | Extra mapper RAM | Intended use |
+| --- | --- | --- | --- |
+| `-s` | Sunrise IDE Nextor | No | Standard Nextor USB mass-storage mode |
+| `-m` | Sunrise IDE Nextor | Yes, 192KB | Nextor workflows that need mapper-capable behavior |
 ## Overview
 
 1. **Input**: one `.ROM` file (case-insensitive extension) supplied via the command line.
@@ -90,6 +97,7 @@ Tags are case-insensitive. If no valid tag is present, the tool falls back to he
 5. Copy the generated UF2 file to the drive. The Pico reboots once flashing completes.
 6. Insert the PicoVerse cartridge into the MSX with a USB thumb drive connected (use a USB OTG adapter if needed).
 7. Power on the MSX to boot into Nextor with the mapper-capable mode enabled. UI mapper text is shown as `SYSTEM`.
+8. In this mode, the additional memory mapper capacity is 192KB (12 x 16KB pages).
 
 ## Troubleshooting
 
@@ -104,6 +112,7 @@ Tags are case-insensitive. If no valid tag is present, the tool falls back to he
 
 - With a regular ROM: only one ROM can be embedded per UF2; use the MultiROM tool for menus and multiple titles.
 - With Sunrise Nextor: requires a compatible USB thumb drive and appropriate Nextor loaders on the MSX side.
+- In mapper mode (`-m`), mapper register handling is global (ports `FC`-`FF`) and the mapper capacity is 192KB.
 - Linux/macOS binaries are not yet provided; use Wine or build from source with GCC.
 - The tool does not verify ROM integrity beyond size checks and simple header heuristics.
 
@@ -161,4 +170,4 @@ Sunrise IDE Nextor ROM (options `-s` and `-m`) has been tested on the following 
 | Yamaha YIS604 | MSX1 | OK | Verified operation |
 
 Author: Cristiano Almeida Goncalves
-Last updated: 02/21/2026
+Last updated: 02/22/2026

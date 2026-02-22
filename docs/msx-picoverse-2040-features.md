@@ -6,6 +6,7 @@ The MSX PicoVerse 2040 is a Raspberry Pi Pico-based MSX-compatible cartridge tha
 - **Built-in Menu System**: A user-friendly menu system allows users to select and launch ROMs easily.
 - **High Compatibility**: Supports a wide range of MSX ROMs, including games and applications for MSX1, MSX2, and MSX2+ systems.
 - **Nextor DOS Support**: Compatible with Nextor DOS, enabling advanced file management and storage options.
+- **Nextor Sunrise Modes**: `-s` enables Sunrise IDE Nextor, and `-m` enables Sunrise IDE Nextor plus an additional 192KB memory mapper.
 - **Long Name Support**: Supports ROM names up to 50 characters, making it easier to identify games and applications.
 - **Support for Various Mappers**: Includes support for multiple ROM mappers, enhancing compatibility with different types of MSX software. Mappers supported include: PL-16, PL-32, KonSCC, Linear, ASC-08, ASC-16, Konami, NEO-8, and NEO-16.
 - **Support for up to 128 ROMs**: Can store and manage up to 128 different ROMs on a single cartridge.
@@ -15,4 +16,4 @@ The MSX PicoVerse 2040 is a Raspberry Pi Pico-based MSX-compatible cartridge tha
 - **USB Mass Storage Support for Nextor**: Allows the use of the USB-C port as a mass storage device when running Nextor DOS.
 
 Author: Cristiano Goncalves  
-Last updated: 01/31/2026
+Last updated: 02/22/2026
