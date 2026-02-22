@@ -406,27 +406,81 @@ int __no_inline_not_in_flash_func(loadrom_msx_menu)(uint32_t offset)
     {
         pio_drain_writes(handle_menu_write, &menu_ctx);
 
-        uint16_t addr = (uint16_t)pio_sm_get_blocking(msx_bus.pio, msx_bus.sm_read);
-
-        pio_drain_writes(handle_menu_write, &menu_ctx);
-
-        if (menu_ctx.rom_selected && addr == 0x0000u)
+        if (menu_ctx.rom_selected)
         {
-            pio_sm_put_blocking(msx_bus.pio, msx_bus.sm_read, pio_build_token(false, 0xFFu));
-            return menu_ctx.rom_index;
+            // ROM selected — switch to non-blocking PIO reads.
+            // After the MSX executes rst 0x00, the cartridge slot is
+            // deselected.  On MSX2 the BIOS rescans via expanded slots
+            // and reads addr 0x0000 through the cartridge (PIO catches
+            // it).  On MSX1 the BIOS never selects the cartridge at
+            // addr 0x0000, so detect the reboot on the raw bus via GPIO
+            // instead (same approach as the non-PIO firmware).
+            if (!pio_sm_is_rx_fifo_empty(msx_bus.pio, msx_bus.sm_read))
+            {
+                uint16_t addr = (uint16_t)pio_sm_get(msx_bus.pio, msx_bus.sm_read);
+                pio_drain_writes(handle_menu_write, &menu_ctx);
+
+                // MSX2 path: expanded-slot scan reaches addr 0x0000
+                if (addr == 0x0000u)
+                {
+                    pio_sm_put_blocking(msx_bus.pio, msx_bus.sm_read,
+                                        pio_build_token(false, 0xFFu));
+                    return menu_ctx.rom_index;
+                }
+
+                // Serve the remaining menu ROM reads before the reset
+                bool in_window = (addr >= 0x4000u) && (addr <= 0xBFFFu);
+                uint8_t data = 0xFFu;
+                if (in_window)
+                {
+                    uint32_t rel = addr - 0x4000u;
+                    if (available_length == 0u || rel < available_length)
+                        data = read_rom_byte(rom_base, rel);
+                }
+                pio_sm_put_blocking(msx_bus.pio, msx_bus.sm_read,
+                                    pio_build_token(in_window, data));
+            }
+            else
+            {
+                // PIO idle (SLTSL high) — the cartridge slot is not
+                // selected.  MSX1 path: detect the reboot by watching
+                // for addr 0x0000 on the address bus with RD active,
+                // regardless of SLTSL.
+                if (!gpio_get(PIN_RD) &&
+                    ((gpio_get_all() & 0xFFFFu) == 0x0000u))
+                {
+                    return menu_ctx.rom_index;
+                }
+            }
         }
-
-        bool in_window = (addr >= 0x4000u) && (addr <= 0xBFFFu);
-        uint8_t data = 0xFFu;
-
-        if (in_window)
+        else
         {
-            uint32_t rel = addr - 0x4000u;
-            if (available_length == 0u || rel < available_length)
-                data = read_rom_byte(rom_base, rel);
-        }
+            // Normal operation — blocking PIO read
+            uint16_t addr = (uint16_t)pio_sm_get_blocking(msx_bus.pio,
+                                                           msx_bus.sm_read);
 
-        pio_sm_put_blocking(msx_bus.pio, msx_bus.sm_read, pio_build_token(in_window, data));
+            pio_drain_writes(handle_menu_write, &menu_ctx);
+
+            if (menu_ctx.rom_selected && addr == 0x0000u)
+            {
+                pio_sm_put_blocking(msx_bus.pio, msx_bus.sm_read,
+                                    pio_build_token(false, 0xFFu));
+                return menu_ctx.rom_index;
+            }
+
+            bool in_window = (addr >= 0x4000u) && (addr <= 0xBFFFu);
+            uint8_t data = 0xFFu;
+
+            if (in_window)
+            {
+                uint32_t rel = addr - 0x4000u;
+                if (available_length == 0u || rel < available_length)
+                    data = read_rom_byte(rom_base, rel);
+            }
+
+            pio_sm_put_blocking(msx_bus.pio, msx_bus.sm_read,
+                                pio_build_token(in_window, data));
+        }
     }
 }
 

@@ -44,8 +44,8 @@ PICOBIN   := ../pico/multirom/build/multirom.bin
 PICOBIN_H := $(SRCDIR)/multirom.h
 MSXMENU := ../msx/dist/menu.rom
 MSXMENU_H := $(SRCDIR)/menu.h
-NEXTOR := ../nextor/dist/nextor.rom
-NEXTOR_H := $(SRCDIR)/nextor.h
+NEXTOR_SUNRISE := ../nextor/kernel/Nextor-2.1.4.SunriseIDE.MasterOnly.ROM
+NEXTOR_SUNRISE_H := $(SRCDIR)/nextor_sunrise.h
 # ESPPROM = ../wireless/dist/ESP8266P.ROM
 
 # Helpers
@@ -60,7 +60,7 @@ compile: $(BINDIR)/$(OUTFILE)
 package: $(DISDIR)/multirom_$(VERSION).exe
 
 
-$(BINDIR)/$(OUTFILE): $(BINDIR) $(SRCDIR)/$(SOURCES) $(PICOBIN_H) $(PICOBIN) $(MSXMENU_H) $(MSXMENU) $(NEXTOR_H) $(NEXTOR)
+$(BINDIR)/$(OUTFILE): $(BINDIR) $(SRCDIR)/$(SOURCES) $(PICOBIN_H) $(PICOBIN) $(MSXMENU_H) $(MSXMENU) $(NEXTOR_SUNRISE_H) $(NEXTOR_SUNRISE)
 	@echo "Compiling $@"
 	$(CC) $(CCFLAGS) -DAPP_VERSION=\"$(VERSION)\" $(SRCDIR)/$(SOURCES) -o $@
 
@@ -72,8 +72,8 @@ $(MSXMENU_H): $(MSXMENU)
 	@echo "Embedding MSX menu ROM into header"
 	$(UTLDIR)/$(XXD) -i $< $@
 
-$(NEXTOR_H): $(NEXTOR)
-	@echo "Embedding Nextor ROM into header"
+$(NEXTOR_SUNRISE_H): $(NEXTOR_SUNRISE)
+	@echo "Embedding Sunrise IDE Nextor ROM into header"
 	$(UTLDIR)/$(XXD) -i $< $@
 
 $(BINDIR):
@@ -88,5 +88,5 @@ $(DISDIR)/multirom_$(VERSION).exe: $(DISDIR) $(BINDIR)/$(OUTFILE)
 
 clean:
 	@echo "Cleaning ...."
-	$(RM) $(BINDIR)/*.exe $(BINDIR)/*.uf2 $(SRCDIR)/multirom.h $(SRCDIR)/menu.h $(SRCDIR)/nextor.h $(BINDIR)/multirom.rom $(BINDIR)/multirom_payload.bin
+	$(RM) $(BINDIR)/*.exe $(BINDIR)/*.uf2 $(SRCDIR)/multirom.h $(SRCDIR)/menu.h $(SRCDIR)/nextor_sunrise.h $(BINDIR)/multirom.rom $(BINDIR)/multirom_payload.bin
 	$(RM) $(DISDIR)/*

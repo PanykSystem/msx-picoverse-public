@@ -40,7 +40,7 @@ pico_sdk_init()
 add_executable(multirom 
     ${PICO_SDK_PATH}/lib/tinyusb/src/tusb.c
     multirom.c 
-    nextor.c )
+    sunrise_ide.c )
 
 pico_generate_pio_header(multirom ${CMAKE_CURRENT_LIST_DIR}/msx_bus.pio)
 

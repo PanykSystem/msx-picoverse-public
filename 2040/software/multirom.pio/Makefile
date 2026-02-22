@@ -7,7 +7,7 @@
 ######################################################################
 
 # Shared version (can be overridden on the command line)
-VERSION ?= v2.00
+VERSION ?= v2.10
 
 # Sub-project locations
 MSX_DIR     := msx
@@ -30,17 +30,14 @@ CMAKE_GENERATOR_FLAG := $(if $(CMAKE_GENERATOR),-G "$(CMAKE_GENERATOR)",)
 CMAKE_BUILD_TYPE ?= Release
 CMAKE_MAKE_PROGRAM_FLAG := $(if $(CMAKE_MAKE_PROGRAM),-DCMAKE_MAKE_PROGRAM="$(CMAKE_MAKE_PROGRAM)",)
 
-.PHONY: all msx nextor pico tool clean
+.PHONY: all msx pico tool clean
 
 all: tool
 
 msx:
 	$(MAKE) -C $(MSX_DIR) VERSION=$(VERSION)
 
-nextor: msx
-	$(MAKE) -C $(NEXTOR_DIR) VERSION=$(VERSION)
-
-pico: nextor $(PICO_CONFIG)
+pico: msx $(PICO_CONFIG)
 	$(CMAKE) --build $(PICO_BUILD)
 
 $(PICO_CONFIG):
@@ -51,7 +48,6 @@ tool: pico
 
 clean:
 	-$(MAKE) -C $(MSX_DIR) clean VERSION=$(VERSION)
-	-$(MAKE) -C $(NEXTOR_DIR) clean VERSION=$(VERSION)
 	-@$(CMAKE) --build $(PICO_BUILD) --target clean
 	-$(MAKE) -C $(TOOL_DIR) clean VERSION=$(VERSION)
 	-@$(CMAKE) -E rm -rf $(PICO_BUILD)

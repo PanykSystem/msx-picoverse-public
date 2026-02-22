@@ -26,7 +26,7 @@
 #include "hardware/regs/m0plus.h"
 
 #include "multirom.h"
-#include "nextor.h"
+#include "sunrise_ide.h"
 #include "msx_bus.pio.h"
 
 // config area and buffer for the ROM data
@@ -40,8 +40,19 @@
 // Custom data starts right after it
 extern unsigned char __flash_binary_end;
 
-// SRAM buffer to cache ROM data
-static uint8_t rom_sram[CACHE_SIZE];
+// SRAM — shared between ROM cache and mapper RAM.
+// Normal modes use the full 192KB as ROM cache.
+// Sunrise+Mapper mode uses the full 192KB as mapper RAM (no ROM cache).
+static union {
+    uint8_t rom_sram[CACHE_SIZE];
+    struct {
+        uint8_t mapper_ram[MAPPER_SIZE];
+    } mapper;
+} sram_pool;
+
+#define rom_sram    sram_pool.rom_sram
+#define mapper_ram  sram_pool.mapper.mapper_ram
+
 static uint32_t active_rom_size = 0;
 
 //pointer to the custom data
@@ -73,6 +84,19 @@ typedef struct {
 static msx_pio_bus_t msx_bus;
 static uint32_t rom_cached_size = 0;
 static bool msx_bus_programs_loaded = false;
+
+// I/O bus context (PIO1) for memory mapper port access
+typedef struct {
+    PIO pio_read;
+    PIO pio_write;
+    uint sm_io_read;
+    uint sm_io_write;
+    uint offset_io_read;
+    uint offset_io_write;
+} msx_pio_io_bus_t;
+
+static msx_pio_io_bus_t msx_io_bus;
+static bool msx_io_bus_programs_loaded = false;
 
 // Initialize GPIO pins
 static inline void setup_gpio()
@@ -204,6 +228,53 @@ static void msx_pio_bus_init(void)
     pio_sm_set_enabled(msx_bus.pio, msx_bus.sm_write, true);
 }
 
+// -----------------------------------------------------------------------
+// PIO I/O bus initialisation (for memory mapper port access on PIO1)
+// -----------------------------------------------------------------------
+static void msx_pio_io_bus_init(void)
+{
+    msx_io_bus.pio_read = pio1;
+    msx_io_bus.pio_write = pio1;
+    msx_io_bus.sm_io_read  = 0;
+    msx_io_bus.sm_io_write = 1;
+
+    if (!msx_io_bus_programs_loaded)
+    {
+        msx_io_bus.offset_io_read = pio_add_program(msx_io_bus.pio_read, &msx_io_read_responder_program);
+        msx_io_bus.offset_io_write = pio_add_program(msx_io_bus.pio_write, &msx_io_write_captor_program);
+        msx_io_bus_programs_loaded = true;
+    }
+
+    pio_sm_set_enabled(msx_io_bus.pio_read, msx_io_bus.sm_io_read, false);
+    pio_sm_set_enabled(msx_io_bus.pio_write, msx_io_bus.sm_io_write, false);
+    pio_sm_clear_fifos(msx_io_bus.pio_read, msx_io_bus.sm_io_read);
+    pio_sm_clear_fifos(msx_io_bus.pio_write, msx_io_bus.sm_io_write);
+    pio_sm_restart(msx_io_bus.pio_read, msx_io_bus.sm_io_read);
+    pio_sm_restart(msx_io_bus.pio_write, msx_io_bus.sm_io_write);
+
+    pio_sm_config cfg_io_read = msx_io_read_responder_program_get_default_config(msx_io_bus.offset_io_read);
+    sm_config_set_in_pins(&cfg_io_read, PIN_A0);
+    sm_config_set_in_shift(&cfg_io_read, false, false, 16);
+    sm_config_set_out_pins(&cfg_io_read, PIN_D0, 8);
+    sm_config_set_out_shift(&cfg_io_read, true, false, 32);
+    sm_config_set_jmp_pin(&cfg_io_read, PIN_RD);
+    sm_config_set_clkdiv(&cfg_io_read, 1.0f);
+    pio_sm_init(msx_io_bus.pio_read, msx_io_bus.sm_io_read, msx_io_bus.offset_io_read, &cfg_io_read);
+
+    pio_sm_config cfg_io_write = msx_io_write_captor_program_get_default_config(msx_io_bus.offset_io_write);
+    sm_config_set_in_pins(&cfg_io_write, PIN_A0);
+    sm_config_set_in_shift(&cfg_io_write, false, false, 32);
+    sm_config_set_fifo_join(&cfg_io_write, PIO_FIFO_JOIN_RX);
+    sm_config_set_jmp_pin(&cfg_io_write, PIN_WR);
+    sm_config_set_clkdiv(&cfg_io_write, 1.0f);
+    pio_sm_init(msx_io_bus.pio_write, msx_io_bus.sm_io_write, msx_io_bus.offset_io_write, &cfg_io_write);
+
+    pio_sm_set_consecutive_pindirs(msx_io_bus.pio_read, msx_io_bus.sm_io_read, PIN_D0, 8, false);
+
+    pio_sm_set_enabled(msx_io_bus.pio_read, msx_io_bus.sm_io_read, true);
+    pio_sm_set_enabled(msx_io_bus.pio_write, msx_io_bus.sm_io_write, true);
+}
+
 static inline uint8_t __not_in_flash_func(read_rom_byte)(const uint8_t *rom_base, uint32_t rel)
 {
     return (rel < rom_cached_size) ? rom_sram[rel] : rom_base[rel];
@@ -236,6 +307,34 @@ static inline void __not_in_flash_func(pio_drain_writes)(void (*handler)(uint16_
     {
         handler(addr, data, ctx);
     }
+}
+
+// Try to consume an I/O write event from the I/O write captor FIFO (PIO1).
+static inline bool __not_in_flash_func(pio_try_get_io_write)(uint16_t *addr_out, uint8_t *data_out)
+{
+    if (pio_sm_is_rx_fifo_empty(msx_io_bus.pio_write, msx_io_bus.sm_io_write))
+        return false;
+
+    uint32_t sample = pio_sm_get(msx_io_bus.pio_write, msx_io_bus.sm_io_write);
+    *addr_out = (uint16_t)(sample & 0xFFFFu);
+    *data_out = (uint8_t)((sample >> 16) & 0xFFu);
+    return true;
+}
+
+// Map an 8-bit mapper register value to a valid mapper page index.
+static inline uint8_t __not_in_flash_func(mapper_page_from_reg)(uint8_t reg)
+{
+    return (uint8_t)(reg % MAPPER_PAGES);
+}
+
+// Try to consume an I/O read event from the I/O read responder FIFO (PIO1).
+static inline bool __not_in_flash_func(pio_try_get_io_read)(uint16_t *addr_out)
+{
+    if (pio_sm_is_rx_fifo_empty(msx_io_bus.pio_read, msx_io_bus.sm_io_read))
+        return false;
+
+    *addr_out = (uint16_t)pio_sm_get(msx_io_bus.pio_read, msx_io_bus.sm_io_read);
+    return true;
 }
 
 typedef struct {
@@ -438,29 +537,83 @@ int __no_inline_not_in_flash_func(loadrom_msx_menu)(uint32_t offset)
     {
         pio_drain_writes(handle_menu_write, &menu_ctx);
 
-        uint16_t addr = (uint16_t)pio_sm_get_blocking(msx_bus.pio, msx_bus.sm_read);
-
-        pio_drain_writes(handle_menu_write, &menu_ctx);
-
-        if (menu_ctx.rom_selected && addr == 0x0000u)
+        if (menu_ctx.rom_selected)
         {
-            pio_sm_put_blocking(msx_bus.pio, msx_bus.sm_read, pio_build_token(false, 0xFFu));
-            return menu_ctx.rom_index;
-        }
-
-        bool in_window = (addr >= 0x4000u) && (addr <= 0xBFFFu);
-        uint8_t data = 0xFFu;
-
-        if (in_window)
-        {
-            uint32_t rel = addr - 0x4000u;
-            if (available_length == 0u || rel < available_length)
+            // ROM selected — switch to non-blocking PIO reads.
+            // After the MSX executes rst 0x00, the cartridge slot is
+            // deselected.  On MSX2 the BIOS rescans via expanded slots
+            // and reads addr 0x0000 through the cartridge (PIO catches
+            // it).  On MSX1 the BIOS never selects the cartridge at
+            // addr 0x0000, so detect the reboot on the raw bus via GPIO
+            // instead (same approach as the non-PIO firmware).
+            if (!pio_sm_is_rx_fifo_empty(msx_bus.pio, msx_bus.sm_read))
             {
-                data = read_rom_byte(rom_base, rel);
+                uint16_t addr = (uint16_t)pio_sm_get(msx_bus.pio, msx_bus.sm_read);
+                pio_drain_writes(handle_menu_write, &menu_ctx);
+
+                // MSX2 path: expanded-slot scan reaches addr 0x0000
+                if (addr == 0x0000u)
+                {
+                    pio_sm_put_blocking(msx_bus.pio, msx_bus.sm_read,
+                                        pio_build_token(false, 0xFFu));
+                    return menu_ctx.rom_index;
+                }
+
+                // Serve the remaining menu ROM reads before the reset
+                bool in_window = (addr >= 0x4000u) && (addr <= 0xBFFFu);
+                uint8_t data = 0xFFu;
+                if (in_window)
+                {
+                    uint32_t rel = addr - 0x4000u;
+                    if (available_length == 0u || rel < available_length)
+                        data = read_rom_byte(rom_base, rel);
+                }
+                pio_sm_put_blocking(msx_bus.pio, msx_bus.sm_read,
+                                    pio_build_token(in_window, data));
+            }
+            else
+            {
+                // PIO idle (SLTSL high) — the cartridge slot is not
+                // selected.  MSX1 path: detect the reboot by watching
+                // for addr 0x0000 on the address bus with RD active,
+                // regardless of SLTSL.
+                if (!gpio_get(PIN_RD) &&
+                    ((gpio_get_all() & 0xFFFFu) == 0x0000u))
+                {
+                    return menu_ctx.rom_index;
+                }
             }
         }
+        else
+        {
+            // Normal operation — blocking PIO read
+            uint16_t addr = (uint16_t)pio_sm_get_blocking(msx_bus.pio,
+                                                           msx_bus.sm_read);
 
-        pio_sm_put_blocking(msx_bus.pio, msx_bus.sm_read, pio_build_token(in_window, data));
+            pio_drain_writes(handle_menu_write, &menu_ctx);
+
+            if (menu_ctx.rom_selected && addr == 0x0000u)
+            {
+                pio_sm_put_blocking(msx_bus.pio, msx_bus.sm_read,
+                                    pio_build_token(false, 0xFFu));
+                return menu_ctx.rom_index;
+            }
+
+            bool in_window = (addr >= 0x4000u) && (addr <= 0xBFFFu);
+            uint8_t data = 0xFFu;
+
+            if (in_window)
+            {
+                uint32_t rel = addr - 0x4000u;
+                if (available_length == 0u || rel < available_length)
+                {
+                    data = read_rom_byte(rom_base, rel);
+                }
+            }
+
+            pio_sm_put_blocking(msx_bus.pio, msx_bus.sm_read,
+                                pio_build_token(in_window, data));
+        }
     }
 }
 
@@ -727,67 +880,288 @@ void __no_inline_not_in_flash_func(loadrom_neo16)(uint32_t offset)
     }
 }
 
-// loadrom_nextor - Load a Nextor ROM into the MSX directly from the pico flash
-void __no_inline_not_in_flash_func(loadrom_nextor)(uint32_t offset)
+// -----------------------------------------------------------------------
+// Sunrise IDE write handler (cReg mapper at 0x4104 + IDE registers)
+// -----------------------------------------------------------------------
+typedef struct {
+    sunrise_ide_t *ide;
+} sunrise_ctx_t;
+
+static inline void __not_in_flash_func(handle_sunrise_write)(uint16_t addr, uint8_t data, void *ctx)
 {
-    //runs the IO code in the second core
-    multicore_launch_core1(nextor_io);    // Launch core 1
+    sunrise_ctx_t *sctx = (sunrise_ctx_t *)ctx;
 
-    //Test copying to RAM to check performance gains
-    gpio_init(PIN_WAIT); // Init wait signal pin
-    gpio_set_dir(PIN_WAIT, GPIO_OUT); // Set the WAIT signal as output
-    // Load the entire ROM into SRAM cache - testing performance
-    //gpio_put(PIN_WAIT, 0); // Wait until we are ready to read the ROM
-    //memset(rom_sram, 0, 131072); // Clear the SRAM buffer
-    //memcpy(rom_sram, rom + offset, 131072); //for 32KB ROMs we start at 0x4000
-    gpio_put(PIN_WAIT, 1); // Lets go!
+    // IDE register / control writes (0x4104, 0x7C00-0x7DFF, 0x7E00-0x7EFF)
+    if (addr >= 0x4000u && addr <= 0x7FFFu)
+    {
+        sunrise_ide_handle_write(sctx->ide, addr, data);
+    }
+}
 
-    uint8_t bank_registers[2] = {0, 1}; // Initial banks 0 and 1 mapped
+// -----------------------------------------------------------------------
+// loadrom_sunrise - Sunrise IDE Nextor ROM with emulated IDE interface
+// -----------------------------------------------------------------------
+// Uses the Sunrise IDE mapper: a single 16KB ROM window at 0x4000-0x7FFF
+// with page selection via the control register at 0x4104 (bits 7:5 = page).
+// No ROM at 0x8000-0xBFFF — the MSX provides its own RAM there.
+// IDE register overlay when bit 0 of the control register is set:
+//   - 0x7C00-0x7DFF = 16-bit data register (low/high byte latch)
+//   - 0x7E00-0x7EFF = ATA task-file registers (mirrored every 16 bytes)
+//   - 0x7F00-0x7FFF = ROM data (excluded from IDE space)
+// ATA commands are translated to USB MSC operations on Core 1.
+void __no_inline_not_in_flash_func(loadrom_sunrise)(uint32_t offset, bool cache_enable)
+{
+    const uint8_t *rom_base;
+    uint32_t available_length;
+    prepare_rom_source(offset, cache_enable, 0u, &rom_base, &available_length);
 
-    gpio_set_dir_in_masked(0xFF << 16);
-    while (true) {
-        // Check control signals
-        bool sltsl = !(gpio_get(PIN_SLTSL)); // Slot selected (active low)
-        bool rd = !(gpio_get(PIN_RD));       // Read cycle (active low)
-        bool wr = !(gpio_get(PIN_WR));       // Write cycle (active low)
+    // Initialise Sunrise IDE state
+    static sunrise_ide_t ide;
+    sunrise_ide_init(&ide);
 
-        if (sltsl) {
-            uint16_t addr = gpio_get_all() & 0x00FFFF; // Read the address bus
-            if (addr >= 0x4000 && addr <= 0xBFFF) 
+    // Share IDE context with Core 1 and launch USB host task
+    sunrise_usb_set_ide_ctx(&ide);
+    multicore_launch_core1(sunrise_usb_task);
+
+    // Initialise PIO bus engine
+    msx_pio_bus_init();
+
+    sunrise_ctx_t ctx = { .ide = &ide };
+
+    // Main loop: service PIO read/write events
+    //
+    // Unlike other mapper loops, the Sunrise IDE requires continuous write
+    // draining.  Each ATA command involves a burst of 8-9 writes (bank
+    // switch + IDE_ON + 6 task-file registers + command) with no
+    // intervening reads.  The PIO write SM FIFO is 8 entries deep
+    // (joined).  If we block on the read FIFO without draining writes,
+    // the FIFO can overflow and the SM stalls, silently dropping writes.
+    // A lost command or LBA register write causes data corruption.
+    //
+    // The fix: poll both FIFOs in a tight loop so writes are drained
+    // continuously — even while waiting for the next read event.
+    while (true)
+    {
+        uint16_t addr;
+
+        // Poll: drain write FIFO while waiting for a read event
+        while (true)
+        {
+            pio_drain_writes(handle_sunrise_write, &ctx);
+            if (!pio_sm_is_rx_fifo_empty(msx_bus.pio, msx_bus.sm_read))
             {
-                if (rd) {
-                    gpio_set_dir_out_masked(0xFF << 16); // Set data bus to output mode
-                    // Loading directly from flash
-                    // Calculate the ROM offset
-                    uint32_t rom_offset = offset + (bank_registers[(addr >> 15) & 1] << 14) + (addr & 0x3FFF);
-                    gpio_put(PIN_WAIT, 0);
-                    uint8_t data = rom[rom_offset];
-                    gpio_put(PIN_WAIT, 1);
-                    gpio_put_masked(0xFF0000, data << 16); // Write the data to the data bus (read from flash)
-                    
-                    // Loading from SRAM cache
-                    //uint32_t rom_offset = (bank_registers[(addr >> 15) & 1] << 14) + (addr & 0x3FFF);
-                    //gpio_put_masked(0xFF0000, rom_sram[rom_offset] << 16); // Write the data to the data bus
+                addr = (uint16_t)pio_sm_get(msx_bus.pio, msx_bus.sm_read);
+                break;
+            }
+        }
 
-                    while (!(gpio_get(PIN_RD)))  // Wait for the read cycle to complete
-                    {
-                        tight_loop_contents();
-                    }
-                    gpio_set_dir_in_masked(0xFF << 16); // Return data bus to input mode after the read cycle
-                }
-                else if (wr) 
+        // Drain any writes that arrived alongside the read
+        pio_drain_writes(handle_sunrise_write, &ctx);
+
+        // Sunrise IDE ROM is only at 0x4000-0x7FFF (one 16KB window)
+        bool in_window = (addr >= 0x4000u) && (addr <= 0x7FFFu);
+        uint8_t data = 0xFFu;
+
+        if (in_window)
+        {
+            // Check if IDE intercepts this read (0x7C00-0x7EFF when enabled)
+            uint8_t ide_data;
+            if (sunrise_ide_handle_read(&ide, addr, &ide_data))
+            {
+                data = ide_data;
+            }
+            else
+            {
+                // Sunrise mapper: page selected by ide.segment (cReg bits 7:5)
+                uint8_t seg = ide.segment;
+                uint32_t rel = ((uint32_t)seg << 14) + (addr & 0x3FFFu);
+                if (available_length == 0u || rel < available_length)
+                    data = read_rom_byte(rom_base, rel);
+            }
+        }
+
+        pio_sm_put_blocking(msx_bus.pio, msx_bus.sm_read, pio_build_token(in_window, data));
+    }
+}
+
+// -----------------------------------------------------------------------
+// loadrom_sunrise_mapper - Sunrise IDE Nextor + 192KB Memory Mapper
+// -----------------------------------------------------------------------
+// Implements expanded slot with two sub-slots:
+//   Sub-slot 0: Nextor ROM (Sunrise IDE) — 16KB window at 0x4000-0x7FFF
+//   Sub-slot 1: 192KB Memory Mapper RAM — all 4 pages (0x0000-0xFFFF)
+//
+// The sub-slot register at 0xFFFF controls which sub-slot is selected
+// for each 16KB page (bits 1:0 = page 0, bits 3:2 = page 1, etc.).
+// Reading 0xFFFF returns the bitwise NOT of the sub-slot register.
+//
+// Memory mapper page registers (I/O ports FC-FF) select which 16KB page
+// of mapper RAM appears in each address range:
+//   Port FC → page at 0x0000-0x3FFF
+//   Port FD → page at 0x4000-0x7FFF
+//   Port FE → page at 0x8000-0xBFFF
+//   Port FF → page at 0xC000-0xFFFF
+//
+// Reset values per BIOS convention: FC=3, FD=2, FE=1, FF=0
+//
+// The mapper RAM is 192KB = 12 pages of 16KB. Page registers are treated
+// as 8-bit values and normalized to 0..11 when accessing RAM.
+void __no_inline_not_in_flash_func(loadrom_sunrise_mapper)(uint32_t offset, bool cache_enable)
+{
+    (void)cache_enable;
+
+    const uint8_t *rom_base;
+    uint32_t available_length;
+    prepare_rom_source(offset, false, 0u, &rom_base, &available_length);
+
+    // Initialise Sunrise IDE state
+    static sunrise_ide_t ide;
+    sunrise_ide_init(&ide);
+
+    // Share IDE context with Core 1 and launch USB host task
+    sunrise_usb_set_ide_ctx(&ide);
+    multicore_launch_core1(sunrise_usb_task);
+
+    // Initialise mapper page registers (BIOS convention)
+    uint8_t mapper_reg[4] = { 3, 2, 1, 0 };  // FC, FD, FE, FF
+
+    // Sub-slot register: bits [1:0]=page0, [3:2]=page1, [5:4]=page2, [7:6]=page3
+    // Boot mapping for Nextor MAP_INIT compatibility:
+    //   page0 -> sub-slot0
+    //   page1 -> sub-slot0 (Sunrise ROM/IDE)
+    //   page2 -> sub-slot1 (mapper RAM, probe target at 0x8000)
+    //   page3 -> sub-slot0
+    uint8_t subslot_reg = 0x10;
+
+    // Clear mapper RAM
+    memset(mapper_ram, 0xFF, MAPPER_SIZE);
+
+    // Initialise PIO bus engines
+    msx_pio_bus_init();
+    msx_pio_io_bus_init();
+
+    sunrise_ctx_t ctx = { .ide = &ide };
+
+    // Main loop: service memory reads/writes and I/O reads/writes
+    while (true)
+    {
+        // --- Drain memory writes (Sunrise IDE + mapper RAM + sub-slot) ---
+        {
+            uint16_t waddr;
+            uint8_t wdata;
+            while (pio_try_get_write(&waddr, &wdata))
+            {
+                if (waddr == 0xFFFFu)
                 {
-                    // Update bank registers based on the specific switching addresses
-                    if ((addr >= 0x6000) && (addr <= 0x67FF)) {
-                        bank_registers[0] = (gpio_get_all() >> 16) & 0xFF;
-                    } else if (addr >= 0x7000 && addr <= 0x77FF) {
-                        bank_registers[1] = (gpio_get_all() >> 16) & 0xFF;
+                    subslot_reg = wdata;
+                }
+                else
+                {
+                    uint8_t page = (waddr >> 14) & 0x03u;
+                    uint8_t active_subslot = (subslot_reg >> (page * 2)) & 0x03u;
+
+                    if (active_subslot == 0)
+                    {
+                        if (waddr >= 0x4000u && waddr <= 0x7FFFu)
+                        {
+                            sunrise_ide_handle_write(&ide, waddr, wdata);
+                        }
                     }
-                    while (!(gpio_get(PIN_WR))) {
-                        tight_loop_contents();
+                    else if (active_subslot == 1)
+                    {
+                        uint8_t mapper_page = mapper_page_from_reg(mapper_reg[page]);
+                        uint32_t mapper_offset = ((uint32_t)mapper_page << 14) | (waddr & 0x3FFFu);
+                        mapper_ram[mapper_offset] = wdata;
                     }
                 }
             }
+        }
+
+        // --- Drain I/O writes (mapper page registers FC-FF) ---
+        {
+            uint16_t io_addr;
+            uint8_t io_data;
+            while (pio_try_get_io_write(&io_addr, &io_data))
+            {
+                uint8_t page2_subslot = (subslot_reg >> 4) & 0x03u;
+                if (page2_subslot != 1u)
+                    continue;
+
+                uint8_t port = io_addr & 0xFFu;
+                if (port >= 0xFCu && port <= 0xFFu)
+                {
+                    mapper_reg[port - 0xFCu] = io_data & 0x0Fu;
+                }
+            }
+        }
+
+        // --- Handle I/O reads (mapper page registers FC-FF) ---
+        {
+            uint16_t io_addr;
+            while (pio_try_get_io_read(&io_addr))
+            {
+                uint8_t page2_subslot = (subslot_reg >> 4) & 0x03u;
+                uint8_t port = io_addr & 0xFFu;
+                bool in_window = false;
+                uint8_t data = 0xFFu;
+
+                if (page2_subslot == 1u && port >= 0xFCu && port <= 0xFFu)
+                {
+                    in_window = true;
+                    data = (uint8_t)(0xF0u | (mapper_reg[port - 0xFCu] & 0x0Fu));
+                }
+
+                pio_sm_put_blocking(msx_io_bus.pio_read, msx_io_bus.sm_io_read, pio_build_token(in_window, data));
+            }
+        }
+
+        // --- Handle memory reads ---
+        if (!pio_sm_is_rx_fifo_empty(msx_bus.pio, msx_bus.sm_read))
+        {
+            uint16_t addr = (uint16_t)pio_sm_get(msx_bus.pio, msx_bus.sm_read);
+            uint8_t data = 0xFFu;
+            bool in_window = false;
+
+            if (addr == 0xFFFFu)
+            {
+                in_window = true;
+                data = ~subslot_reg;
+            }
+            else
+            {
+                uint8_t page = (addr >> 14) & 0x03u;
+                uint8_t active_subslot = (subslot_reg >> (page * 2)) & 0x03u;
+
+                if (active_subslot == 0)
+                {
+                    if (addr >= 0x4000u && addr <= 0x7FFFu)
+                    {
+                        in_window = true;
+
+                        uint8_t ide_data;
+                        if (sunrise_ide_handle_read(&ide, addr, &ide_data))
+                        {
+                            data = ide_data;
+                        }
+                        else
+                        {
+                            uint8_t seg = ide.segment;
+                            uint32_t rel = ((uint32_t)seg << 14) + (addr & 0x3FFFu);
+                            if (available_length == 0u || rel < available_length)
+                                data = read_rom_byte(rom_base, rel);
+                        }
+                    }
+                }
+                else if (active_subslot == 1)
+                {
+                    in_window = true;
+                    uint8_t mapper_page = mapper_page_from_reg(mapper_reg[page]);
+                    uint32_t mapper_offset = ((uint32_t)mapper_page << 14) | (addr & 0x3FFFu);
+                    data = mapper_ram[mapper_offset];
+                }
+            }
+
+            pio_sm_put_blocking(msx_bus.pio, msx_bus.sm_read, pio_build_token(in_window, data));
         }
     }
 }
@@ -835,8 +1209,11 @@ int main(void)
             loadrom_neo16(selected->Offset); 
             break;
         case 10:
-            loadrom_nextor(selected->Offset); 
+            loadrom_sunrise(selected->Offset, true); 
            break;
+        case 11:
+            loadrom_sunrise_mapper(selected->Offset, true);
+            break;
         default:
             printf("Debug: Unsupported ROM mapper: %d\n", selected->Mapper);
             break;

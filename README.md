@@ -12,17 +12,20 @@ PicoVerse is designed as an open-source, independent, and documented MSX cartrid
 
 ## Whats New in PicoVerse?
 
-- New Sunrise IDE emulation feature and Nextor support on the RP2040-based cartridge, allowing the USB-C port to function as a Sunrise IDE-compatible hard disk. Full documentation available [here](/docs/msx-picoverse-2040-sunrise-nextor.md) ***(NEW!)***
-- New PIO based **MultiROM** firmware and tool for PicoVerse 2350 (`2350/software/multirom.pio`) with automatic SCC emulation for Konami SCC mappers. ***(NEW!)***
+- New Sunrise IDE emulation feature and Nextor support on the PicoVerse 2040 cartridge, allowing the USB-C port to function as a Sunrise IDE-compatible hard disk. Full documentation available [here](/docs/msx-picoverse-2040-sunrise-nextor.md) ***(NEW!)***
+- Both PicoVerse 2040 PIO based LoadROM and MultiROM tools now support Sunrise IDE emulation with Nextor ***(NEW!)***
+- Updated PicoVerse 2040 LoadROM with improved mapper RAM capacity (192KB) and better Nextor compatibility, including stable boot and runtime behavior in MSX1 and MSX2 environments. ***(NEW!)***
+- Updated PicoVerse 2040 MultiROM with improved mapper RAM capacity (192KB) and better Nextor compatibility, including stable boot and runtime behavior in MSX1 and MSX2 environments. ***(NEW!)***
+- New PIO based **MultiROM** firmware and tool for PicoVerse 2350 (`2350/software/multirom.pio`) with automatic SCC emulation for Konami SCC ROMs. ***(NEW!)***
 - New PIO based **Explorer** firmware and tool for PicoVerse 2350 (`2350/software/explorer.pio`) that merges flash and microSD ROMs into a single menu, adds MP3 playback, SCC/SCC+ emulation, and supports on-device search. ***(NEW!)***
 
 ## Project Highlights
 
 - Single-ROM LoadROM workflow for instant and easy booting of one title.
 - Multi-ROM loader with an on-screen menu and mapper auto-detection.
-- Explorer firmware (RP2350) merges flash and microSD ROMs, labels the source (FL/SD), adds MP3 playback, and supports on-device search.
-- Ready-made Nextor builds with USB (RP2040) or microSD (RP2350) storage bridges.
-- SCC/SCC+ emulation on the RP2350, with auto-detection and manual forcing options. ***(NEW!)***
+- Explorer firmware (PicoVerse 2350) merges flash and microSD ROMs, labels the source (FL/SD), adds MP3 playback, and supports on-device search.
+- Ready-made Nextor builds with USB (PicoVerse 2040) or microSD (PicoVerse 2350) with Sunrise IDE emulation. ***(NEW!)***
+- SCC/SCC+ emulation on the PicoVerse 2350, with auto-detection and manual forcing options. ***(NEW!)***
 - PC-side tooling that generates UF2 images locally for quick drag-and-drop flashing.
 - BOMs, and production-ready Gerbers.
 - Active development roadmap covering RP2040 and RP2350-based cartridges.
@@ -30,9 +33,9 @@ PicoVerse is designed as an open-source, independent, and documented MSX cartrid
 ## Documentation
 
 **LoadROM Guides:** Use the LoadROM tool to create a UF2 image that boots directly into a single ROM, skipping the menu. Mapper type is auto-detected with filename tag overrides, and the tool reports the detected configuration before flashing.
-- [MSX PicoVerse 2040 LoadROM Tool Manual (English)](/docs/msx-picoverse-2040-loadrom-tool-manual.en-us.md)
-- [MSX PicoVerse 2350 LoadROM Tool Manual (English)](/docs/msx-picoverse-2350-loadrom-tool-manual.en-us.md)
-- 
+- [MSX PicoVerse 2040 LoadROM Tool Manual (English)](/docs/msx-picoverse-2040-loadrom-tool-manual.en-us.md) ***(UPDATED!)***
+- [MSX PicoVerse 2350 LoadROM Tool Manual (English)](/docs/msx-picoverse-2350-loadrom-tool-manual.en-us.md) ***(UPDATED!)***
+  
 **MultiROM Guides:** Use the MultiROM tool to create a UF2 image that allows selecting from multiple ROMs at boot. Mapper type is auto-detected with filename tag overrides, and the tool reports the detected configuration before flashing.
 - [PicoVerse 2040 MultiROM Guide Manual (English)](/docs/msx-picoverse-2040-multirom-tool-manual.en-us.md)
 - [PicoVerse 2350 MultiROM Tool Manual (English)](/docs/msx-picoverse-2350-multirom-tool-manual.en-us.md)
@@ -48,6 +51,7 @@ PicoVerse is designed as an open-source, independent, and documented MSX cartrid
 - [MSX PicoVerse 2350 SCC Emulation Guide](/docs/msx-picoverse-2350-scc.md)
 - [Nextor Pico Bridge Protocol](/docs/Nextor-Pico-Bridge-Protocol.md)
 - [MSX PicoVerse 2040 Sunrise IDE Emulation for Nextor](/docs/msx-picoverse-2040-sunrise-nextor.md) ***(NEW!)***
+- [MSX PicoVerse 2040 Mapper Implementation (Sunrise + Nextor)](/docs/msx-picoverse-2040-mapper.md) ***(NEW!)***
 
 ## Hardware Variants
 
@@ -176,7 +180,6 @@ Consult the LoadROM manuals linked above for screenshots, troubleshooting, and i
 |<center>**ROM Details Screen**||
 |![](/images/WIN_20260207_20_03_20_Pro.jpg)||
 
-
 Explorer is a 2350-only firmware that merges ROMs stored in flash with additional ROMs and MP3 files on the microSD card. ROMs are labeled with source tags (FL/SD), MP3 entries open a player screen, the list supports paging, and you can search by name directly in the menu. Use the Explorer tool to build the UF2 and copy extra ROMs and MP3 files to the microSD card. See the Explorer manual for limits (flash vs SD capacity, 256 KB SD ROM limit, and supported formats).
 
 You can have up to 1024 entries per folder view (folders + ROMs + MP3s; the root view can also include flash entries). The menu auto-detects whether the MSX supports 80-column text mode and boots accordingly; you can also press `C` at any time to toggle between 40- and 80-column layouts.
@@ -184,6 +187,7 @@ You can have up to 1024 entries per folder view (folders + ROMs + MP3s; the root
 A search function is available by pressing `/` in the menu. Type part of a ROM name and press Enter to jump to the first matching entry. Press `H` to view the help screen.
 
 ## Compatibility & Requirements
+
 - Works with MSX, MSX2, MSX2+, and MSX TurboR systems. Mapper support covers the most common game and utility formats.
 - Requires Windows OS to run the PC-side UF2 builder utilities.
 - Ensure your development board matches the pinout documented for each hardware revision before soldering.
@@ -198,9 +202,15 @@ All hardware and firmware binaries in this repository are released under the Cre
 
 **msxromcrt0.s** is used on Nextor C implementation and was adapted by S0urceror, 2022, from the crt0.s file available in FusionC v2.0. The original crt0.s file is licensed under the MIT License. The adapted msxromcrt0.s file in this repository is also released under the MIT License, permitting free use, modification, and distribution with proper attribution.
 
+**uf2format.h** is used in all UF2 builder tools and was adapted from the UF2 specification and reference implementation available at https://github.com/Microsoft/uf2/blob/master/uf2.h. The original uf2.h is copyright by Microsoft Corp and the file is licensed under the MIT License. The adapted uf2format.h file in this repository is also released under the MIT License, allowing for free use, modification, and distribution with proper attribution.
+
 **emu2212.c** and **emu2212.h** used to implement SCC and SCC+ emulation are copyright by Mitsutaka Okazaki 2014 and licensed under the MIT License, allowing for free use, modification, and distribution with proper attribution. [emu2212 @ Digital Sound Antiques](https://github.com/digital-sound-antiques/emu2212)
 
 **emu2149.c** and **emu2149.h** used to implement AY-3-8910 emulation are copyright by Mitsutaka Okazaki 2014 and licensed under the MIT License, allowing for free use, modification, and distribution with proper attribution. [emu2149 @ Digital Sound Antiques](https://github.com/digital-sound-antiques/emu2149)
+
+The Sunrise IDE driver for Nextor used on PicoVerse is copyright by Konamiman, Piter Punk, and FRS, and is licensed under the special terms by MSX Licensing Corporation. The original Sunrise IDE code is available at https://github.com/Konamiman/Nextor/blob/v2.1/source/kernel/drivers/SunriseIDE/sunride.asm
+
+The algorithm to emulate ATA devices is original and based on the implementation for the Carnivore2 cartridge, Copyright (c) 2017-2024 by the RBSC group. Portions (c) Mitsutaka Okazaki and (c) Kazuhiro Tsujikawa. Available at https://github.com/RBSC/Carnivore2/tree/master/Firmware/Sources
 
 ## Feedback & Community
 

@@ -38,3 +38,64 @@ wait_sltsl:
     push block
     wait 1 gpio 25
 .wrap
+
+; ===================================================================
+; msx_io_write_captor
+; ===================================================================
+; Captures address + data during MSX I/O write cycles (/IORQ + /WR).
+; Used for intercepting writes to mapper ports (FC-FF).
+;
+; RX FIFO word format:
+;   bits[15:0]  = A0..A15
+;   bits[23:16] = D0..D7
+;
+; No side-set, no out pins needed.
+; FIFO join RX for deep buffering (8 entries).
+
+.program msx_io_write_captor
+
+; jmp_pin must be configured to /WR (GPIO 25) from C code.
+;   /WR=1 (inactive) → jump taken  → re-check /IORQ
+;   /WR=0 (active)   → fall through → capture the write
+
+.wrap_target
+wait_iorq:
+    wait 0 gpio 26           ; Wait for /IORQ=0 (I/O request)
+    jmp pin wait_iorq         ; If /WR=1 (no write), re-check /IORQ
+    nop              [2]     ; Let address + data settle (3 cycles)
+    mov isr, pins            ; Snapshot all GPIOs into ISR
+    push block               ; Send (addr+data) to CPU via RX FIFO
+    wait 1 gpio 25           ; Wait for /WR=1 (write cycle ends)
+.wrap
+
+; ===================================================================
+; msx_io_read_responder
+; ===================================================================
+; Responds to MSX I/O read cycles (/IORQ + /RD).
+; Used for reading mapper port registers (FC-FF).
+;
+; in_base     = GPIO 0  (A0), 16 pins
+; out_base    = GPIO 16 (D0), 8 pins
+
+.program msx_io_read_responder
+
+; jmp_pin must be configured to /RD (GPIO 24) from C code.
+;   /RD=1 (inactive) → jump taken  → re-check /IORQ
+;   /RD=0 (active)   → fall through → handle the read
+
+.wrap_target
+wait_iorq:
+    wait 0 gpio 26                ; Wait for /IORQ=0 (I/O request)
+    jmp pin wait_iorq             ; If /RD=1 (no read), re-check /IORQ
+    nop                           ; timing spacer
+    in pins, 16                   ; Capture A0..A15 into ISR
+    push block                    ; Send address to CPU via RX FIFO
+    pull block                    ; Wait for CPU response in TX FIFO (data token)
+    out pins, 8                   ; Drive D0..D7 with data byte
+    out pindirs, 8                ; Set pindirs (0xFF=output, 0x00=tristate)
+    nop                    [1]    ; Data hold before /RD rises
+    wait 1 gpio 24                ; Wait for /RD=1 (bus cycle ends)
+    set x, 0                      ; Prepare zero for tri-state
+    mov osr, x                    ; Load zero into OSR
+    out pindirs, 8                ; Tri-state D0..D7 (pindirs=0x00)
+.wrap

@@ -29,13 +29,6 @@
 #define PIN_A14    14
 #define PIN_A15    15
 
-// Memory mapper configuration
-#define NEXTOR_MAPPER_SEGMENTS 8
-#define NEXTOR_PRIMARY_SLOT    1
-
-extern volatile uint8_t nextor_secondary_slot_reg;
-extern volatile uint8_t nextor_mapper_segments[4];
-
 // Data lines (D0-D7)
 #define PIN_D0     16
 #define PIN_D1     17
@@ -56,6 +49,10 @@ extern volatile uint8_t nextor_mapper_segments[4];
 
 //28 and 29 are physically shared with WAIT/BUSSDIR in this design
 
+#define MAPPER_SIZE      196608   // 192 KB memory mapper RAM
+#define MAPPER_PAGES     12       // 192 KB / 16 KB = 12 pages
+#define MAPPER_PAGE_SIZE 16384    // 16 KB per mapper page
+
 static inline void setup_gpio();
 unsigned long read_ulong(const unsigned char *ptr);
 int isEndOfData(const unsigned char *memory);
@@ -68,3 +65,5 @@ void __no_inline_not_in_flash_func(loadrom_ascii8)(uint32_t offset, bool cache_e
 void __no_inline_not_in_flash_func(loadrom_ascii16)(uint32_t offset, bool cache_enable);
 void __no_inline_not_in_flash_func(loadrom_neo8)(uint32_t offset);
 void __no_inline_not_in_flash_func(loadrom_neo16)(uint32_t offset);
+void __no_inline_not_in_flash_func(loadrom_sunrise)(uint32_t offset, bool cache_enable);
+void __no_inline_not_in_flash_func(loadrom_sunrise_mapper)(uint32_t offset, bool cache_enable);

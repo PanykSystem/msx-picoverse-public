@@ -51,7 +51,7 @@ void create_uf2_file(const char *rom_filename, const uint8_t *embedded_rom, uint
 
 static const char *MAPPER_DESCRIPTIONS[] = {
     "PL-16", "PL-32", "KonSCC", "Linear", "ASC-08",
-    "ASC-16", "Konami", "NEO-8", "NEO-16", "SYSTEM"
+    "ASC-16", "Konami", "NEO-8", "NEO-16", "SYSTEM", "MAPPER"
 };
 
 static const char *rom_types[] = {
@@ -65,10 +65,12 @@ static const char *rom_types[] = {
     "Konami",
     "NEO8",
     "NEO16",
-    "Sunrise"
+    "Sunrise",
+    "Sunrise+Mapper"
 };
 
 #define ROM_TYPE_SUNRISE 10
+#define ROM_TYPE_SUNRISE_MAPPER 11
 
 #define MAPPER_DESCRIPTION_COUNT (sizeof(MAPPER_DESCRIPTIONS) / sizeof(MAPPER_DESCRIPTIONS[0]))
 
@@ -289,11 +291,12 @@ uint8_t detect_rom_type(const char *filename, uint32_t size) {
 // Print usage information
 static void print_usage(const char *prog_name) {
 
-    printf("Usage: %s [-h] [-s] [-o <filename>] [romfile]\n", prog_name);
+    printf("Usage: %s [-h] [-s] [-m] [-o <filename>] [romfile]\n", prog_name);
     printf("\n");
     printf("Options:\n");
     printf("  -h, --help Show this help message\n");
     printf("  -s, --sunrise Build UF2 with embedded Sunrise IDE Nextor ROM\n");
+    printf("  -m, --mapper  Build UF2 with Sunrise IDE Nextor ROM + 192KB memory mapper\n");
     printf("  -o <filename>, --output <filename>  Set UF2 output filename (default %s)\n", UF2FILENAME);
     printf("\n");
     printf("Mapper forcing: append tags (case-insensitive) before the ROM extension.\n");
@@ -440,6 +443,7 @@ int main(int argc, char *argv[])
     const char *output_filename = UF2FILENAME;
     const char *rom_filename = NULL;
     bool use_sunrise = false;
+    bool use_mapper = false;
 
     for (int i = 1; i < argc; ++i) {
         if ((strcmp(argv[i], "-h") == 0) || (strcmp(argv[i], "--help") == 0)) {
@@ -447,6 +451,8 @@ int main(int argc, char *argv[])
             return 0;
         } else if ((strcmp(argv[i], "-s") == 0) || (strcmp(argv[i], "--sunrise") == 0)) {
             use_sunrise = true;
+        } else if ((strcmp(argv[i], "-m") == 0) || (strcmp(argv[i], "--mapper") == 0)) {
+            use_mapper = true;
         } else if ((strcmp(argv[i], "-o") == 0) || (strcmp(argv[i], "--output") == 0)) {
             if (i + 1 >= argc) {
                 printf("Option -o/--output requires a filename.\n");
@@ -464,17 +470,22 @@ int main(int argc, char *argv[])
         }
     }
 
-    if (use_sunrise) {
+    if (use_sunrise && use_mapper) {
+        printf("Options -s and -m are mutually exclusive. Use -m for Sunrise IDE + mapper.\n");
+        return 1;
+    }
+
+    if (use_sunrise || use_mapper) {
         if (rom_filename) {
-            printf("The -s/--sunrise option does not accept an external ROM file.\n");
+            printf("The -s/--sunrise and -m/--mapper options do not accept an external ROM file.\n");
             return 1;
         }
 
         const uint8_t *sunrise_rom = ___nextor_kernel_Nextor_2_1_4_SunriseIDE_MasterOnly_ROM;
         uint32_t sunrise_rom_size = (uint32_t)___nextor_kernel_Nextor_2_1_4_SunriseIDE_MasterOnly_ROM_len;
-        uint8_t rom_type = ROM_TYPE_SUNRISE;
+        uint8_t rom_type = use_mapper ? ROM_TYPE_SUNRISE_MAPPER : ROM_TYPE_SUNRISE;
         uint32_t base_offset = CONFIG_RECORD_SIZE;
-        const char *sunrise_name = "Nextor Sunrise IDE";
+        const char *sunrise_name = use_mapper ? "Nextor Sunrise+Mapper" : "Nextor Sunrise IDE";
 
         if (sunrise_rom_size == 0) {
             printf("Embedded Sunrise IDE Nextor ROM payload is empty.\n");
@@ -535,8 +546,8 @@ int main(int argc, char *argv[])
             mapper_token[token_length] = '\0';
 
             uint8_t candidate = mapper_number_from_description(mapper_token);
-            if (candidate == 10) {
-                printf("Ignoring SYSTEM mapper tag in %s (cannot be forced)\n", base_name);
+            if (candidate == 10 || candidate == 11) {
+                printf("Ignoring SYSTEM/MAPPER tag in %s (cannot be forced)\n", base_name);
             } else if (candidate != 0) {
                 mapper_forced_by_tag = true;
                 mapper_from_tag = candidate;

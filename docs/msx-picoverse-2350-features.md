@@ -7,7 +7,7 @@ The MSX PicoVerse 2350 is a Raspberry Pi Pico 2350-based MSX-compatible cartridg
 - **Explorer Firmware**: Unified menu that merges ROMs from flash and microSD in a single list.
 - **Source Labels (FL/SD)**: Each ROM entry shows whether it comes from flash or microSD.
 - **High Compatibility**: Supports a wide range of MSX ROMs, including games and applications for MSX1, MSX2, and MSX2+ systems.
-- **Nextor DOS Support**: Compatible with Nextor DOS, enabling advanced file management and storage options. Currently supports Nextor OS 2.1.4 on the SD card.
+- **Nextor DOS Support**: Compatible with Nextor DOS, enabling advanced file management and storage options. Currently supports Nextor OS 2.1.4 on the SD card. You can run DSK files using Nextor.
 - **Long Name Support**: Supports ROM names up to 60 characters, making it easier to identify games and applications.
 - **Support for Various Mappers**: Includes support for multiple ROM mappers, enhancing compatibility with different types of MSX software. Mappers supported include: PL-16, PL-32, KonSCC, Linear, ASC-08, ASC-16, Konami, NEO-8, NEO-16, and others.
 - **Support for up to 1024 entries (Explorer)**: Per folder view, including ROMs and MP3s; the root view can also include flash entries.
@@ -23,5 +23,5 @@ The MSX PicoVerse 2350 is a Raspberry Pi Pico 2350-based MSX-compatible cartridg
 - **Firmware Updates**: The cartridge firmware can be updated via USB, allowing users to benefit from new features and improvements over time.
 - **Compact Design**: The cartridge is designed to fit seamlessly into MSX systems without adding bulk.
 - **SD Card Slot**: Equipped with an SD card slot for easy storage and transfer of ROMs and files.
-- **Audio Profile Selection**: Allows users to select different audio profiles for enhanced sound compatibility with various MSX models. ``Audio profiles are under development and may not work as expected on all MSX models.``
+- **Audio Profile Selection**: Allows users to select different audio profiles for enhanced sound compatibility with various MSX models. 
 - **SCC/SCC+ Emulation**: When enabled for Konami SCC mapper ROMs, the cartridge can emulate the SCC and SCC+ sound chips in hardware, providing accurate audio output through an I2S DAC connected to the RP2350. This allows games that use SCC or SCC+ sound to have their full soundtrack without requiring an original SCC cartridge. For details on supported registers and behavior, see the [SCC/SCC+ documentation](docs/msx-picoverse-2350-scc.md).

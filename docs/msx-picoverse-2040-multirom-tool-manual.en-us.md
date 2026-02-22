@@ -41,7 +41,7 @@ ROM file names are used to name the entries in the MSX menu. There is a limit of
 
 > **Note:** To use a USB thumdrive you may need a OTG adapter or cable. That can be used to convert the USB-C port to a standard USB-A female port.
 
-> **Note:** The `-n` option includes an experimental embedded Nextor ROM that works on specific MSX2 models. This version uses a different communication method (IO port based) and may not work on all systems.
+> **Note:** The `-s` option includes the Sunrise IDE Nextor ROM, and the `-m` option includes Sunrise IDE Nextor with 192KB mapper support. Both provide USB mass-storage support via the cartridge's USB-C port and work on MSX1, MSX2, and MSX2+ systems.
 
 ## Command-line usage
 
@@ -54,15 +54,20 @@ multirom.exe [options]
 ```
 
 ### Options:
-- `-n`, `--nextor` : Includes the beta embedded NEXTOR ROM from the configuration and outputs. This option is still experimental and at this moment only works on specific MSX2 models.
+- `-s`, `--sunrise` : Includes the embedded Sunrise IDE Nextor ROM for USB mass-storage support. The cartridge's USB-C port can be used as a block device with Nextor-compatible loaders like SofaRun.
+- `-m`, `--mapper` : Includes the embedded Sunrise IDE Nextor ROM with 192KB mapper support. In the MSX menu this entry is still shown with mapper text `SYSTEM`.
 - `-h`, `--help`   : Show usage help and exit.
 - `-o <filename>`, `--output <filename>` : Set UF2 output filename (default is `multirom.uf2`).
-- If you need to force a specific mapper type for a ROM file, you can append a mapper tag before the `.ROM` extension in the filename. The tag is case-insensitive. For example, naming a file `Knight Mare.PL-32.ROM` forces the use of the PL-32 mapper for that ROM. Tags like `SYSTEM` are ignored. The list of possible tags that can be used is: `PL-16,  PL-32,  KonSCC,  Linear,  ASC-08,  ASC-16,  Konami,  NEO-8,  NEO-16`
+- If you need to force a specific mapper type for a ROM file, you can append a mapper tag before the `.ROM` extension in the filename. The tag is case-insensitive. For example, naming a file `Knight Mare.PL-32.ROM` forces the use of the PL-32 mapper for that ROM. Tags like `SYSTEM` and `MAPPER` are ignored. The list of possible tags that can be used is: `PL-16,  PL-32,  KonSCC,  Linear,  ASC-08,  ASC-16,  Konami,  NEO-8,  NEO-16`
 
 ### Examples
 - Produces the multirom.uf2 file with the MultiROM menu and all `.ROM` files in the current directory. You can run the tool using the command prompt or just by double-clicking the executable:
   ```
   multirom.exe
+  ```
+- Produces a multirom UF2 that also includes a menu entry for Sunrise IDE Nextor + 192KB Mapper:
+  ```
+  multirom.exe -m -o multirom_mapper.uf2
   ```
   
 ## How it works (high level)
@@ -100,9 +105,9 @@ At any time while in the menu, you can press H key read the help screen with bas
 
 ## Using Nextor with the PicoVerse 2040 cartridge
 
-The -n option of the multirom tool includes an experimental embedded Nextor ROM that can be used on specific MSX2 models. However, this option is still under development and may not work on all systems. This version uses a different method (IO port based) to communicate with the MSX, allowing it to work on systems where the cartridge slot is not primary, for example with slot expanders. 
+The `-s` option of the multirom tool includes Sunrise IDE Nextor ROM, and the `-m` option includes Sunrise IDE Nextor ROM with 192KB mapper support. When the multirom UF2 is flashed with either option, the Pico's USB-C port exposes a block device that Nextor-compatible loaders (such as SofaRun) can use to load ROMs, DSK files, and other media from a connected USB thumb drive.
 
-More details on the protocol used to communicate with the MSX computer can be found in the Nextor-Pico-Bridge-Protocol.md document. 
+The Sunrise IDE implementation uses ATA register emulation, making it compatible with a wide range of MSX systems including MSX1, MSX2, and MSX2+ models. 
 
 ### How to prepare a thumb drive for Nextor
 
@@ -122,22 +127,10 @@ To prepare a USB thumb drive for use with Nextor on the PicoVerse 2040 cartridge
 >
 > **Note:** Remember Nextor needs a minimum of 128 KB of RAM to operate. 
 
-## Improvements ideas
-- Improve the ROM type detection heuristics to cover more mappers and edge cases.
-- Implement configuration screen for each ROM entry (name, mapper override, etc).
-- Add support for more ROM mappers.
-- Implement a graphical menu with better navigation and ROM information display.
-- Add support for saving/loading menu configuration to preserve user preferences.
-- Support DSK files as well, with proper configuration entries.
-- Add support for custom themes for the menu.
-- Allow downloading ROMs from Internet URLs and embedding them directly.
-- Allow the use of the joystick to navigate the menu.
-
 ## Known issues
 
-- The embedded Nextor ROM inclusion is still experimental and may not work on all MSX2 models.
 - Some ROMs with uncommon mappers may not be detected correctly and will be skipped unless a valid mapper tag is used to force detection.
-- The MultiROM tool currently only supports Windows. Linux and macOS versions are not available yet.
+- The MultiROM tool currently only supports Windows. 
 - The tool does not currently validate the integrity of ROM files beyond size and basic header checks. Corrupted ROMs may lead to unexpected behavior.
 - Due to the nature of MultiROM tool (embedding multiple files into a single UF2), some antivirus software may flag the executable as suspicious. This is a false positive; ensure you download the tool from a trusted source.
 - The MultiROM menu does not support DSK files; only ROM files are listed and launched.
@@ -172,14 +165,30 @@ The PicoVerse 2040 cartridge with MultiROM firmware has been tested on the follo
 | uMSX | MSX2+ (FPGA clone) | OK | Verified operation |
 | Yamaha YIS604 | MSX1 | OK | Verified operation |
 
-Experimental embedded Nextor ROM (option `-n`) has been tested on the following MSX models:
+Sunrise IDE Nextor ROM (options `-s` and `-m`) has been tested on the following MSX models:
 
 | Model | Type | Status | Comments |
 | --- | --- | --- | --- |
-| Omega MSX | MSX2+ | Not OK | USB not detected |
-| Sony HB-F1XD | MSX2 | Not OK | Error reading disk sector |
+| Adermir Carchano Expert 4 | MSX2+ | OK | Verified operation |
+| Gradiente Expert | MSX1 | OK | Verified operation |
+| JFF MSX | MSX1 | OK | Verified operation |
+| MSX Book | MSX2+ (FPGA clone) | OK | Verified operation |
+| National FS-4500 | MSX1 | OK | Verified operation |
+| Omega MSX | MSX2+ | OK | Verified operation |
+| Panasonic FS-A1GT | TurboR | OK | Verified operation |
+| Panasonic FS-A1ST | TurboR | OK | Verified operation |
+| Panasonic FS-A1WX | MSX2+ | OK | Verified operation |
+| Panasonic FS-A1WSX | MSX2+ | OK | Verified operation |
+| Sanyo Wavy 70FD | MSX2+ | OK | Verified operation |
+| Sharp HotBit HB8000 | MSX1 | OK | Verified operation |
+| SMX-HB | MSX2+ (FPGA clone) | OK | Verified operation |
+| Sony HB-F1XD | MSX2 | OK | Verified operation |
+| Sony HB-F1XDJ | MSX2 | OK | Verified operation |
+| Sony HB-F1XV | MSX2+ | OK | Verified operation |
+| Sony Hit-Bit 20HB | MSX1 | OK | Verified operation |
 | TRHMSX | MSX2+ (FPGA clone) | OK | Verified operation |
 | uMSX | MSX2+ (FPGA clone) | OK | Verified operation |
+| Yamaha YIS604 | MSX1 | OK | Verified operation |
 
 Author: Cristiano Almeida Goncalves
-Last updated: 12/25/2025
+Last updated: 02/21/2026

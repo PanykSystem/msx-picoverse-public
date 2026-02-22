@@ -7,7 +7,7 @@
 ######################################################################
 
 # Shared version (can be overridden on the command line)
-VERSION ?= v2.01
+VERSION ?= v2.02
 
 # Sub-project locations
 MSX_DIR       := msx

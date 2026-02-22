@@ -1868,6 +1868,15 @@ int __no_inline_not_in_flash_func(loadrom_msx_menu)(uint32_t offset)
         pio_drain_writes(handle_menu_write_explorer, &menu_ctx);
 
         if (pio_sm_is_rx_fifo_empty(msx_bus.pio, msx_bus.sm_read)) {
+            // PIO idle (SLTSL high).  On MSX1 the BIOS never selects
+            // the cartridge at addr 0x0000 after rst 0x00, so detect
+            // the reboot on the raw bus via GPIO.
+            if (menu_ctx.rom_selected &&
+                !gpio_get(PIN_RD) &&
+                ((gpio_get_all() & 0xFFFFu) == 0x0000u))
+            {
+                return menu_ctx.rom_index;
+            }
             tight_loop_contents();
             continue;
         }
