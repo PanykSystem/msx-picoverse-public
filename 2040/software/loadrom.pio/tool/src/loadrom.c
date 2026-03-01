@@ -10,7 +10,7 @@
 // 
 // The configuration record has the following structure:
 //  game - Game name                            - 20 bytes (padded by 0x00)
-//  mapp - Mapper code                          - 01 byte  (1 - Plain16, 2 - Plain32, 3 - KonamiSCC, 4 - Linear0, 5 - ASCII8, 6 - ASCII16, 7 - Konami, 8 - NEO8, 9 - NEO16, 10 - Sunrise, 11 - Sunrise+Mapper, 12 - ASCII16-X)
+//  mapp - Mapper code                          - 01 byte  (1 - Plain16, 2 - Plain32, 3 - KonamiSCC, 4 - Planar48, 5 - ASCII8, 6 - ASCII16, 7 - Konami, 8 - NEO8, 9 - NEO16, 10 - Sunrise, 11 - Sunrise+Mapper, 12 - ASCII16-X, 13 - Planar64)
 //  size - Size of the ROM in bytes             - 04 bytes 
 //  offset - Offset of the game in the flash    - 04 bytes 
 //
@@ -50,8 +50,8 @@ void create_uf2_file(const char *rom_filename, const uint8_t *embedded_rom, uint
                      const char *rom_name, uint32_t base_offset, const char *uf2_filename);
 
 static const char *MAPPER_DESCRIPTIONS[] = {
-    "PL-16", "PL-32", "KonSCC", "Linear", "ASC-08",
-    "ASC-16", "Konami", "NEO-8", "NEO-16", "SYSTEM", "MAPPER", "ASC-16X"
+    "PLA-16", "PLA-32", "KonSCC", "PLN-48", "ASC-08",
+    "ASC-16", "Konami", "NEO-8", "NEO-16", "SYSTEM", "SYSTEM", "ASC-16X", "PLN-64"
 };
 
 static const char *rom_types[] = {
@@ -59,7 +59,7 @@ static const char *rom_types[] = {
     "Plain16",
     "Plain32",
     "Konami SCC",
-    "Linear0",
+    "Planar48",
     "ASCII8",
     "ASCII16",
     "Konami",
@@ -67,12 +67,14 @@ static const char *rom_types[] = {
     "NEO16",
     "Sunrise",
     "Sunrise+Mapper",
-    "ASCII16-X"
+    "ASCII16-X",
+    "Planar64"
 };
 
 #define ROM_TYPE_SUNRISE 10
 #define ROM_TYPE_SUNRISE_MAPPER 11
 #define ROM_TYPE_ASCII16X 12
+#define ROM_TYPE_PLANAR64 13
 
 #define MAPPER_DESCRIPTION_COUNT (sizeof(MAPPER_DESCRIPTIONS) / sizeof(MAPPER_DESCRIPTIONS[0]))
 
@@ -96,6 +98,21 @@ static uint8_t mapper_number_from_description(const char *description) {
             return (uint8_t)(i + 1);
         }
     }
+
+    // Backward-compatible aliases for older tags and verbose planar names.
+    if (equals_ignore_case(description, "PL-16")) {
+        return 1;
+    }
+    if (equals_ignore_case(description, "PL-32")) {
+        return 2;
+    }
+    if (equals_ignore_case(description, "PL-48") || equals_ignore_case(description, "PLN-32") || equals_ignore_case(description, "PLANAR32") || equals_ignore_case(description, "LINEAR") || equals_ignore_case(description, "LINEAR0") || equals_ignore_case(description, "PLANAR48")) {
+        return 4;
+    }
+    if (equals_ignore_case(description, "PL-64") || equals_ignore_case(description, "PLANAR64")) {
+        return ROM_TYPE_PLANAR64;
+    }
+
     return 0;
 }
 
@@ -154,9 +171,8 @@ uint8_t detect_rom_type(const char *filename, uint32_t size) {
         return 0; // unknown mapper
     }
 
-    // Determine the size to read (max 128KB or the actual size if smaller)
-    size_t read_size = (size > MAX_ANALYSIS_SIZE) ? MAX_ANALYSIS_SIZE : size;
-    //size_t read_size = size; 
+    // openMSX-style: inspect the full ROM for mapper-write patterns.
+    size_t read_size = size;
     // Dynamically allocate memory for the ROM
     uint8_t *rom = (uint8_t *)malloc(read_size);
     if (!rom) {
@@ -177,10 +193,10 @@ uint8_t detect_rom_type(const char *filename, uint32_t size) {
 
     if (rom[0] == 'A' && rom[1] == 'B' && size <= 32768) {
 
-        //check if it is a normal 32KB ROM or linear0 32KB ROM
+        // Check if it is a normal 32KB ROM or Planar32/48-style layout.
         if (rom[0x4000] == 'A' && rom[0x4001] == 'B') {
             free(rom);
-            return 4; // Linear0 32KB
+            return 4; // Planar32/48 style (AB at 0x4000)
         }
         
         free(rom);
@@ -204,10 +220,21 @@ uint8_t detect_rom_type(const char *filename, uint32_t size) {
     }
 
     // Check if the ROM has the signature "AB" at 0x4000 and 0x4001
-    // That is the case for 48KB ROMs with Linear page 0 config
+    // That is the case for 48KB Planar mapping.
     if (rom[0x4000] == 'A' && rom[0x4001] == 'B' && size <= 49152) {
         free(rom);
-        return 4; // Linear0 48KB
+        return 4; // Planar48
+    }
+
+    // 64KB planar ROMs may only expose AB at 0x4000.
+    // Treat that as sufficient for Planar64 classification.
+    if (size == 65536u) {
+        bool ab4000 = (rom[0x4000] == 'A' && rom[0x4001] == 'B');
+
+        if (ab4000) {
+            free(rom);
+            return ROM_TYPE_PLANAR64;
+        }
     }
 
     // Heuristic analysis for larger ROMs
@@ -281,10 +308,85 @@ uint8_t detect_rom_type(const char *filename, uint32_t size) {
             return 6; // ASCII16
         }
 
-        if (ascii16_score == konami_scc_score)
+        // Resolve non-zero score ties with a secondary heuristic.
         {
+            int max_score = konami_score;
+            if (konami_scc_score > max_score) max_score = konami_scc_score;
+            if (ascii8_score > max_score) max_score = ascii8_score;
+            if (ascii16_score > max_score) max_score = ascii16_score;
+
+            int max_count = 0;
+            if (konami_score == max_score) ++max_count;
+            if (konami_scc_score == max_score) ++max_count;
+            if (ascii8_score == max_score) ++max_count;
+            if (ascii16_score == max_score) ++max_count;
+
+            if (max_score > 0 && max_count > 1) {
+                unsigned int raw_77ff = 0u;
+                unsigned int raw_6800 = 0u;
+                unsigned int raw_7800 = 0u;
+                bool ab0 = (rom[0x0000] == 'A' && rom[0x0001] == 'B');
+
+                for (size_t i = 0; i + 1 < read_size; ++i)
+                {
+                    uint16_t raw = (uint16_t)(rom[i] | (rom[i + 1] << 8));
+                    if (raw == 0x77FFu) ++raw_77ff;
+                    else if (raw == 0x6800u) ++raw_6800;
+                    else if (raw == 0x7800u) ++raw_7800;
+                }
+
+                if (ascii16_score == max_score && raw_77ff > (raw_6800 + raw_7800)) {
+                    free(rom);
+                    return 6; // ASCII16
+                }
+                if (ascii8_score == max_score && (raw_6800 + raw_7800) >= raw_77ff) {
+                    free(rom);
+                    return 5; // ASCII8
+                }
+
+                if (ab0 && size > 65536u && ((size % 16384u) == 0u)) {
+                    free(rom);
+                    return (raw_77ff > (raw_6800 + raw_7800)) ? 6 : 5;
+                }
+            }
+        }
+
+        // Avoid false positives when no mapper writes were identified.
+        // For 64KB ROMs with AB header(s), fallback to Planar64.
+        if (konami_score == 0 && konami_scc_score == 0 && ascii8_score == 0 && ascii16_score == 0)
+        {
+            bool ab0 = (rom[0x0000] == 'A' && rom[0x0001] == 'B');
+            bool ab4000 = (rom[0x4000] == 'A' && rom[0x4001] == 'B');
+
+            if (size == 65536u && (ab0 || ab4000))
+            {
+                free(rom);
+                return ROM_TYPE_PLANAR64;
+            }
+
+            // Some valid dumps contain no detectable ld(nn),a mapper writes.
+            // For AB-header ROMs larger than 64KB, use raw constant density
+            // as a secondary hint: 0x77FF favors ASCII16; otherwise ASCII8.
+            if (size > 65536u && ab0 && ((size % 16384u) == 0u))
+            {
+                unsigned int raw_77ff = 0u;
+                unsigned int raw_6800 = 0u;
+                unsigned int raw_7800 = 0u;
+
+                for (size_t i = 0; i + 1 < read_size; ++i)
+                {
+                    uint16_t raw = (uint16_t)(rom[i] | (rom[i + 1] << 8));
+                    if (raw == 0x77FFu) ++raw_77ff;
+                    else if (raw == 0x6800u) ++raw_6800;
+                    else if (raw == 0x7800u) ++raw_7800;
+                }
+
+                free(rom);
+                return (raw_77ff > (raw_6800 + raw_7800)) ? 6 : 5; // ASCII16 : ASCII8
+            }
+
             free(rom);
-            return 6; // Konami SCC
+            return 0; // unknown mapper
         }
 
         free(rom);
@@ -297,6 +399,8 @@ uint8_t detect_rom_type(const char *filename, uint32_t size) {
 
 // Print usage information
 static void print_usage(const char *prog_name) {
+    size_t i;
+    bool first = true;
 
     printf("Usage: %s [-h] [-s] [-m] [-o <filename>] [romfile]\n", prog_name);
     printf("\n");
@@ -307,7 +411,21 @@ static void print_usage(const char *prog_name) {
     printf("  -o <filename>, --output <filename>  Set UF2 output filename (default %s)\n", UF2FILENAME);
     printf("\n");
     printf("Mapper forcing: append tags (case-insensitive) before the ROM extension.\n");
-    printf("Example: \"Knight Mare.PL-32.ROM\" forces PL-32; \"SYSTEM\" tags are ignored.\n");
+    printf("Forceable tags: ");
+    for (i = 0; i < MAPPER_DESCRIPTION_COUNT; ++i) {
+        uint8_t mapper_id = (uint8_t)(i + 1u);
+        if (mapper_id == 10u || mapper_id == 11u) {
+            continue;
+        }
+
+        if (!first) {
+            printf(", ");
+        }
+        printf("%s", MAPPER_DESCRIPTIONS[i]);
+        first = false;
+    }
+    printf("\n");
+    printf("Example: \"Knight Mare.PLA-32.ROM\" forces PLA-32; \"SYSTEM\" tags are ignored.\n");
 }
 
 // create_uf2_file - Create the UF2 file
@@ -554,7 +672,7 @@ int main(int argc, char *argv[])
 
             uint8_t candidate = mapper_number_from_description(mapper_token);
             if (candidate == 10 || candidate == 11) {
-                printf("Ignoring SYSTEM/MAPPER tag in %s (cannot be forced)\n", base_name);
+                printf("Ignoring SYSTEM tag in %s (cannot be forced)\n", base_name);
             } else if (candidate != 0) {
                 mapper_forced_by_tag = true;
                 mapper_from_tag = candidate;

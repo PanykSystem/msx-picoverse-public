@@ -646,13 +646,13 @@ int __no_inline_not_in_flash_func(loadrom_msx_menu)(uint32_t offset)
     }
 }
 
-// loadrom_plain32 - Load a simple 32KB (or less) ROM into the MSX directly from the pico flash
+// loadrom_planar32 - Load a simple 32KB (or less) ROM into the MSX directly from the pico flash
 // 32KB ROMS have two pages of 16Kb each in the following areas:
 // 0x4000-0x7FFF and 0x8000-0xBFFF
 // AB is on 0x0000, 0x0001
 // 16KB ROMS have only one page in the 0x4000-0x7FFF area
 // AB is on 0x0000, 0x0001
-void __no_inline_not_in_flash_func(loadrom_plain32)(uint32_t offset, bool cache_enable)
+void __no_inline_not_in_flash_func(loadrom_planar32)(uint32_t offset, bool cache_enable)
 {
     const uint8_t *rom_base;
     uint32_t available_length;
@@ -680,11 +680,11 @@ void __no_inline_not_in_flash_func(loadrom_plain32)(uint32_t offset, bool cache_
     }
 }
 
-// loadrom_linear48 - Load a simple 48KB Linear0 ROM into the MSX directly from the pico flash
+// loadrom_planar48 - Load a simple 48KB Planar ROM into the MSX directly from the pico flash
 // Those ROMs have three pages of 16Kb each in the following areas:
 // 0x0000-0x3FFF, 0x4000-0x7FFF and 0x8000-0xBFFF
 // AB is on 0x4000, 0x4001
-void __no_inline_not_in_flash_func(loadrom_linear48)(uint32_t offset, bool cache_enable)
+void __no_inline_not_in_flash_func(loadrom_planar48)(uint32_t offset, bool cache_enable)
 {
     const uint8_t *rom_base;
     uint32_t available_length;
@@ -706,6 +706,33 @@ void __no_inline_not_in_flash_func(loadrom_linear48)(uint32_t offset, bool cache
             {
                 data = read_rom_byte(rom_base, rel);
             }
+        }
+
+        pio_sm_put_blocking(msx_bus.pio, msx_bus.sm_read, pio_build_token(in_window, data));
+    }
+}
+
+// loadrom_planar64 - Load a 64KB Planar ROM into the MSX from pico flash
+// Those ROMs have four 16KB pages mapped over the full address space:
+// 0x0000-0x3FFF, 0x4000-0x7FFF, 0x8000-0xBFFF and 0xC000-0xFFFF
+void __no_inline_not_in_flash_func(loadrom_planar64)(uint32_t offset, bool cache_enable)
+{
+    const uint8_t *rom_base;
+    uint32_t available_length;
+    prepare_rom_source(offset, cache_enable, 65536u, &rom_base, &available_length);
+
+    msx_pio_bus_init();
+
+    while (true)
+    {
+        uint16_t addr = (uint16_t)pio_sm_get_blocking(msx_bus.pio, msx_bus.sm_read);
+
+        bool in_window = true;
+        uint8_t data = 0xFFu;
+
+        if (available_length == 0u || (uint32_t)addr < available_length)
+        {
+            data = read_rom_byte(rom_base, (uint32_t)addr);
         }
 
         pio_sm_put_blocking(msx_bus.pio, msx_bus.sm_read, pio_build_token(in_window, data));
@@ -1280,13 +1307,13 @@ int main(void)
     switch (selected->Mapper) {
         case 1:
         case 2:
-            loadrom_plain32(selected->Offset, true);
+            loadrom_planar32(selected->Offset, true);
             break;
         case 3:
             loadrom_konamiscc(selected->Offset, true);
             break;
         case 4:
-            loadrom_linear48(selected->Offset, true);
+            loadrom_planar48(selected->Offset, true);
             break;
         case 5:
             loadrom_ascii8(selected->Offset, true); 
@@ -1311,6 +1338,9 @@ int main(void)
             break;
         case 12:
             loadrom_ascii16x(selected->Offset, true);
+            break;
+        case 13:
+            loadrom_planar64(selected->Offset, true);
             break;
         default:
             printf("Debug: Unsupported ROM mapper: %d\n", selected->Mapper);

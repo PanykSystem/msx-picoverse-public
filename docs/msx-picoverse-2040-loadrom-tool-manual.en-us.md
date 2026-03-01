@@ -22,7 +22,7 @@ Key characteristics:
 
 - Works on Windows (console app). Tested in `cmd.exe` and PowerShell.
 - Supports ROM sizes from 8 KB up to 16 MB (subject to Pico flash capacity).
-- Detects common mapper types automatically. Mapper can be forced via filename tags (same scheme as `multirom`): `PL-16`, `PL-32`, `KonSCC`, `Linear`, `ASC-08`, `ASC-16`, `ASC-16X`, `Konami`, `NEO-8`, `NEO-16`.
+- Detects common mapper types automatically. Mapper can be forced via filename tags (same scheme as `multirom`): `PLA-16`, `PLA-32`, `KonSCC`, `PLN-48`, `ASC-08`, `ASC-16`, `ASC-16X`, `Konami`, `NEO-8`, `NEO-16`, `PLN-64`.
 - Generates UF2 files recognized by the RP2040 ROM bootloader (sets the RP2040 family ID flag).
 
 ## Command-line usage
@@ -48,7 +48,7 @@ loadrom.exe [options] [romfile]
 `loadrom.exe` shares the same forcing mechanism as the MultiROM tool. Append a dot-separated mapper tag before the `.ROM` extension to override detection:
 
 ```
-Penguin Adventure.PL-32.ROM
+Penguin Adventure.PLA-32.ROM
 Space Manbow.KonSCC.rom
 ```
 

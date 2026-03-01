@@ -6,14 +6,14 @@ This document describes the implementation of the Sunrise IDE interface emulatio
 
 The MSX PicoVerse 2040 Sunrise IDE emulation provides a complete implementation of the Sunrise MSX IDE interface, allowing the MSX to boot Nextor DOS and access USB mass storage devices through the RP2040's USB-C port. The implementation:
 
-- Emulates the Sunrise IDE FlashROM mapper (128 KB, 8 × 16 KB pages)
+- Emulates Sunrise IDE FlashROM banking for the 128 KB Nextor ROM image (8 × 16 KB pages)
 - In mapper mode (`-m` / mapper type `11`), adds 192KB memory mapper RAM (12 x 16KB pages)
 - Emulates the full ATA task-file register set
 - Translates ATA sector read/write commands into USB Mass Storage Class (MSC) Bulk-Only Transport operations
 - Runs the Nextor 2.1.4 Sunrise IDE driver (Master Only edition)
 - Uses the RP2040's dual-core architecture for deterministic bus timing
 
-Note: The 128KB value above refers to the Sunrise/Nextor ROM image itself. The optional mapper mode adds a separate 192KB RAM mapper region for Nextor compatibility.
+Note: The 128KB value above refers only to the Sunrise/Nextor ROM image size. Mapper mode (`-m`) provides a separate 192KB RAM mapper region (12 x 16KB pages) for Nextor compatibility.
 
 ## 2. The Original Sunrise IDE Hardware
 

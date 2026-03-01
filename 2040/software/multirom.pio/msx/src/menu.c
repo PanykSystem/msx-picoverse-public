@@ -393,10 +393,10 @@ static int wait_for_key_with_scroll(const char *name, unsigned int row)
 // This function will return the description of the mapper type based on the mapper number.
 const char* mapper_description(int number) {
     switch (number) {
-        case 1:  return "PL-16";
-        case 2:  return "PL-32";
+        case 1:  return "PLA-16";
+        case 2:  return "PLA-32";
         case 3:  return "KNSCC";
-        case 4:  return "LINEAR";
+        case 4:  return "PLN-48";
         case 5:  return "ASC08";
         case 6:  return "ASC16";
         case 7:  return "KONAMI";
@@ -405,6 +405,7 @@ const char* mapper_description(int number) {
         case 10: return "SYSTEM";
         case 11: return "SYSTEM";
         case 12: return "ASC16X";
+        case 13: return "PLN-64";
         default: return "UNKWN";
     }
 }

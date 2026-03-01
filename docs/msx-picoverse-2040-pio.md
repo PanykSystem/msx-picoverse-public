@@ -78,8 +78,8 @@ This avoids stale-slot race conditions that can cause false reads/writes after d
 
 Supported mappers in PIO paths include:
 
-- Plain16 / Plain32
-- Linear48
+- Plain16 / Plain32 (`PLA-16` / `PLA-32`)
+- Planar48 / Planar64 (`PLN-48` / `PLN-64`)
 - Konami SCC
 - Konami
 - ASCII8 / ASCII16
@@ -97,7 +97,7 @@ Supported mappers in PIO paths include:
 | Runtime | Single ROM from one record | Menu ROM first, then selected ROM from record table |
 | Menu monitor write | N/A | Captured through `SM1` to detect selected entry |
 | Lifecycle | One main flow | Re-initializes SM/FIFO state between menu and selected-ROM phases |
-| Mapper set | 1..12 (`12` = ASCII16-X) | 1..12 (`10` = Sunrise IDE Nextor, `11` = Sunrise IDE Nextor + 192KB mapper, `12` = ASCII16-X) |
+| Mapper set | 1..13 (`12` = ASCII16-X, `13` = Planar64) | 1..13 (`10` = Sunrise IDE Nextor, `11` = Sunrise IDE Nextor + 192KB mapper, `12` = ASCII16-X, `13` = Planar64) |
 
 ---
 

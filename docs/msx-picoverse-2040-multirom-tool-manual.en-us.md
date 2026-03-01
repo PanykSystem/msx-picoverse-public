@@ -13,7 +13,7 @@ Those are the features available in the current version of the PicoVerse 2040 ca
 * MultiROM menu system for selecting and launching MSX ROMs.
 * Inline Menu option with Nextor OS support.
 * USB mass-storage device support for loading ROMs and DSKs.
-* Support for various MSX ROM mappers (PL-16, PL-32, KonSCC, Linear, ASC-08, ASC-16, ASC-16X, Konami, NEO-8, NEO-16).
+* Support for various MSX ROM mappers (PLA-16, PLA-32, KonSCC, PLN-48, PLN-64, ASC-08, ASC-16, ASC-16X, Konami, NEO-8, NEO-16).
 * Compatibility with MSX, MSX2, and MSX2+ systems.
 
 ## MultiROM UF2 Creator Manual
@@ -58,7 +58,7 @@ multirom.exe [options]
 - `-m`, `--mapper` : Includes the embedded Sunrise IDE Nextor ROM with 192KB mapper support (12 x 16KB pages). In the MSX menu this entry is still shown with mapper text `SYSTEM`.
 - `-h`, `--help`   : Show usage help and exit.
 - `-o <filename>`, `--output <filename>` : Set UF2 output filename (default is `multirom.uf2`).
-- If you need to force a specific mapper type for a ROM file, you can append a mapper tag before the `.ROM` extension in the filename. The tag is case-insensitive. For example, naming a file `Knight Mare.PL-32.ROM` forces the use of the PL-32 mapper for that ROM. Tags like `SYSTEM` and `MAPPER` are ignored. The list of possible tags that can be used is: `PL-16,  PL-32,  KonSCC,  Linear,  ASC-08,  ASC-16,  ASC-16X,  Konami,  NEO-8,  NEO-16`
+- If you need to force a specific mapper type for a ROM file, you can append a mapper tag before the `.ROM` extension in the filename. The tag is case-insensitive. For example, naming a file `Knight Mare.PLA-32.ROM` forces the use of the PLA-32 mapper for that ROM. `SYSTEM` tags are ignored. The list of current tags is: `PLA-16, PLA-32, KonSCC, PLN-48, ASC-08, ASC-16, ASC-16X, Konami, NEO-8, NEO-16, PLN-64`.
 
 ### Examples
 - Produces the multirom.uf2 file with the MultiROM menu and all `.ROM` files in the current directory. You can run the tool using the command prompt or just by double-clicking the executable:
@@ -85,11 +85,12 @@ multirom.exe [options]
 - `detect_rom_type()` implements a combination of signature checks ("AB" header, `ROM_NEO8` / `ROM_NE16` tags) and heuristic scanning of opcodes and addresses to pick common MSX mappers, including (but not limited to):
   - Plain 16KB (mapper byte 1) — 16KB AB header check
   - Plain 32KB (mapper byte 2) — 32KB AB header check
-  - Linear0 mapper (mapper byte 4) — special AB layout check
+  - Planar48 mapper (mapper byte 4, tag `PLN-48`) — special AB layout check
+  - Planar64 mapper (mapper byte 13, tag `PLN-64`) — 64KB planar layout
   - NEO8 (mapper byte 8) and NEO16 (mapper byte 9)
   - Konami, Konami SCC, ASCII8, ASCII16 and others via weighted scoring
 - If no mapper can be reliably detected, the tool skips the ROM and reports "unsupported mapper". Remember you can force a mapper via filename tag. The tags are case-insensitive and are listed below. 
-- Only the following mappers are supported in the configuration area and menu: `PL-16,  PL-32,  KonSCC,  Linear,  ASC-08,  ASC-16,  ASC-16X,  Konami,  NEO-8,  NEO-16`
+- Only the following mapper tags are supported in the configuration area and menu: `PLA-16, PLA-32, KonSCC, PLN-48, ASC-08, ASC-16, ASC-16X, Konami, NEO-8, NEO-16, PLN-64`.
 
 ## Using the MSX ROM Selector menu
 
@@ -125,7 +126,7 @@ To prepare a USB thumb drive for use with Nextor on the PicoVerse 2040 cartridge
 
 > **Note:** Not all USB thumb drives are compatible with the PicoVerse 2040 cartridge. If you encounter issues, try using a different brand or model of thumb drive.
 >
-> **Note:** Remember Nextor needs a minimum of 128 KB of RAM to operate. 
+> **Note:** Nextor needs a minimum of 128 KB of RAM to operate; PicoVerse 2040 mapper mode provides 192KB mapper RAM (12 x 16KB pages).
 
 ## Known issues
 

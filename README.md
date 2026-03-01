@@ -14,7 +14,7 @@ PicoVerse is designed as an open-source, independent, and documented MSX cartrid
 
 - Both PicoVerse 2040 PIO based LoadROM and MultiROM tools now support Sunrise IDE emulation with Nextor ***(NEW!)***
 - Updated PicoVerse 2040 LoadROM and MultiROM with improved mapper RAM capacity (192KB) and better Nextor compatibility, including stable boot and runtime behavior in MSX1 and MSX2 environments. ***(NEW!)***
-- Added ASCII16-X mapper support to all PicoVerse 2040 firmware variants, with auto-detection heuristics and filename tag overrides in the LoadROM and MultiROM tools. ***(NEW!)*** 
+- Added ASCII16-X and PLANAR64 mappers support to all PicoVerse 2040 firmware variants, with auto-detection heuristics and filename tag overrides in the LoadROM and MultiROM tools. ***(NEW!)*** 
 - New PIO based **MultiROM** firmware and tool for PicoVerse 2350 (`2350/software/multirom.pio`) with automatic SCC emulation for Konami SCC ROMs. ***(NEW!)***
 - New PIO based **Explorer** firmware and tool for PicoVerse 2350 (`2350/software/explorer.pio`) that merges flash and microSD ROMs into a single menu, adds MP3 playback, SCC/SCC+ emulation, and supports on-device search. ***(NEW!)***
 
@@ -61,7 +61,7 @@ PicoVerse is designed as an open-source, independent, and documented MSX cartrid
 | ![Image 1](/images/20241230_001854885_iOS.jpg) | ![Image 2](/images/20241230_001901504_iOS.jpg) | 
 
 - Based on RP2040 boards exposing 30 GPIO pins (not compatible with stock Raspberry Pi Pico pinout).
-- Up to 16 MB of flash for MSX ROMs with support for Plain16/32, Linear0, Konami SCC, Konami, ASCII8/16, NEO-8, and NEO-16 mappers.
+- Up to 16 MB of flash for MSX ROMs with support for Plain16/32 (`PLA-16`/`PLA-32`), Planar48/64 (`PLN-48`/`PLN-64`), Konami SCC, Konami, ASCII8/16, NEO-8, and NEO-16 mappers.
 - USB-C port doubles as a bridge for Nextor mass storage.
 
 #### Bill of Materials
@@ -152,7 +152,7 @@ Check the detailed MultiROM guide in the documentation folder for advanced featu
 
 The LoadROM tool targets situations where you want the PicoVerse to behave like a traditional single-game cartridge. Instead of showing the MultiROM menu, the Pico boots straight into one ROM embedded in the UF2 image.
 
-- **Input**: exactly one `.ROM` file. Mapper type is auto-detected with the same heuristics as MultiROM, and you can still force a mapper via filename tags such as `.KonSCC.ROM` or `.PL-32.ROM`.
+- **Input**: exactly one `.ROM` file. Mapper type is auto-detected with the same heuristics as MultiROM, and you can still force a mapper via filename tags such as `.KonSCC.ROM` or `.PLA-32.ROM`.
 - **Output**: `loadrom.uf2` by default, or any filename you pass via `-o`. The UF2 contains the firmware, a 59-byte configuration record (title, mapper, size, flash offset), and the ROM payload.
 - **Workflow**:
    1. Open a Command Prompt or PowerShell window in your target package folder:

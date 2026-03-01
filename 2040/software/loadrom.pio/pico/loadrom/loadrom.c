@@ -519,11 +519,11 @@ static void __no_inline_not_in_flash_func(banked8_loop)(
 }
 
 // -----------------------------------------------------------------------
-// loadrom_plain32 - Plain 16/32KB ROM (no mapper)
+// loadrom_planar32 - Planar 16/32KB ROM (no mapper)
 // -----------------------------------------------------------------------
 // 32KB ROMs occupy 0x4000-0xBFFF. 16KB ROMs occupy 0x4000-0x7FFF.
 // No bank switching; pure address-to-data lookup.
-void __no_inline_not_in_flash_func(loadrom_plain32)(uint32_t offset, bool cache_enable)
+void __no_inline_not_in_flash_func(loadrom_planar32)(uint32_t offset, bool cache_enable)
 {
     const uint8_t *rom_base;
     uint32_t available_length;
@@ -543,10 +543,10 @@ void __no_inline_not_in_flash_func(loadrom_plain32)(uint32_t offset, bool cache_
 }
 
 // -----------------------------------------------------------------------
-// loadrom_linear48 - 48KB Linear0 ROM (no mapper)
+// loadrom_planar48 - 48KB Planar ROM (no mapper)
 // -----------------------------------------------------------------------
 // Three pages: 0x0000-0x3FFF, 0x4000-0x7FFF, 0x8000-0xBFFF
-void __no_inline_not_in_flash_func(loadrom_linear48)(uint32_t offset, bool cache_enable)
+void __no_inline_not_in_flash_func(loadrom_planar48)(uint32_t offset, bool cache_enable)
 {
     const uint8_t *rom_base;
     uint32_t available_length;
@@ -560,6 +560,32 @@ void __no_inline_not_in_flash_func(loadrom_linear48)(uint32_t offset, bool cache
 
         bool in_window = (addr <= 0xBFFFu);
         uint8_t data = in_window ? rom_base[addr] : 0xFFu;
+
+        pio_sm_put_blocking(msx_bus.pio, msx_bus.sm_read, pio_build_token(in_window, data));
+    }
+}
+
+// -----------------------------------------------------------------------
+// loadrom_planar64 - 64KB Planar ROM (no mapper)
+// -----------------------------------------------------------------------
+// Four 16KB pages covering the full 64KB address space.
+void __no_inline_not_in_flash_func(loadrom_planar64)(uint32_t offset, bool cache_enable)
+{
+    const uint8_t *rom_base;
+    uint32_t available_length;
+    prepare_rom_source(offset, cache_enable, 65536u, &rom_base, &available_length);
+
+    msx_pio_bus_init();
+
+    while (true)
+    {
+        uint16_t addr = (uint16_t)pio_sm_get_blocking(msx_bus.pio, msx_bus.sm_read);
+
+        bool in_window = true;
+        uint8_t data = 0xFFu;
+
+        if (available_length == 0u || (uint32_t)addr < available_length)
+            data = read_rom_byte(rom_base, (uint32_t)addr);
 
         pio_sm_put_blocking(msx_bus.pio, msx_bus.sm_read, pio_build_token(in_window, data));
     }
@@ -1224,26 +1250,27 @@ int __no_inline_not_in_flash_func(main)()
     // 1 - 16KB ROM
     // 2 - 32KB ROM
     // 3 - Konami SCC ROM
-    // 4 - 48KB Linear0 ROM
+    // 4 - Planar48 ROM
     // 5 - ASCII8 ROM
     // 6 - ASCII16 ROM
     // 7 - Konami (without SCC) ROM
     // 8 - NEO8 ROM
     // 9 - NEO16 ROM
-    // 10 - Sunrise IDE Nextor ROM (Konami mapper)
+    // 10 - Sunrise IDE Nextor ROM (SYSTEM)
     // 11 - Sunrise IDE Nextor ROM + 128KB Memory Mapper
     // 12 - ASCII16-X ROM
+    // 13 - Planar64 ROM
     switch (rom_type) 
     {
         case 1:
         case 2:
-            loadrom_plain32(ROM_RECORD_SIZE, true); 
+            loadrom_planar32(ROM_RECORD_SIZE, true); 
             break;
         case 3:
             loadrom_konamiscc(ROM_RECORD_SIZE, true); 
             break;
         case 4:
-            loadrom_linear48(ROM_RECORD_SIZE, true); 
+            loadrom_planar48(ROM_RECORD_SIZE, true); 
             break;
         case 5:
             loadrom_ascii8(ROM_RECORD_SIZE, true); 
@@ -1268,6 +1295,9 @@ int __no_inline_not_in_flash_func(main)()
             break;
         case 12:
             loadrom_ascii16x(ROM_RECORD_SIZE, true);
+            break;
+        case 13:
+            loadrom_planar64(ROM_RECORD_SIZE, true);
             break;
         default:
             break;
