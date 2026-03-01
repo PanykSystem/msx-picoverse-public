@@ -12,7 +12,6 @@ PicoVerse is designed as an open-source, independent, and documented MSX cartrid
 
 ## Whats New in PicoVerse?
 
-- New Sunrise IDE emulation feature and Nextor support on the PicoVerse 2040 cartridge, allowing the USB-C port to function as a Sunrise IDE-compatible hard disk. Full documentation available [here](/docs/msx-picoverse-2040-sunrise-nextor.md) ***(NEW!)***
 - Both PicoVerse 2040 PIO based LoadROM and MultiROM tools now support Sunrise IDE emulation with Nextor ***(NEW!)***
 - Updated PicoVerse 2040 LoadROM and MultiROM with improved mapper RAM capacity (192KB) and better Nextor compatibility, including stable boot and runtime behavior in MSX1 and MSX2 environments. ***(NEW!)***
 - Added ASCII16-X mapper support to all PicoVerse 2040 firmware variants, with auto-detection heuristics and filename tag overrides in the LoadROM and MultiROM tools. ***(NEW!)*** 
