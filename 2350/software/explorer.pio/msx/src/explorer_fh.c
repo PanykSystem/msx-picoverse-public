@@ -225,11 +225,11 @@ static void fh_download(unsigned int index)
     fh_wait_download_ready();
 }
 
-static void fh_network_status(void)
+static void fh_network_status_with_text(const char *status_text)
 {
     unsigned int i;
     Poke(CTRL_CMD, CMD_FH_WIFI_STATUS);
-    fh_wait_ready_status(fh_status_text("Checking net...", "Checking network status..."));
+    fh_wait_ready_status(status_text);
     for (i = 0; i + 1 < sizeof(fh_status_right); i++) {
         char ch = *((char *)(CTRL_FH_STATUS_TEXT_BASE + i));
         fh_status_right[i] = ch;
@@ -238,6 +238,11 @@ static void fh_network_status(void)
         }
     }
     fh_status_right[sizeof(fh_status_right) - 1] = '\0';
+}
+
+static void fh_network_status(void)
+{
+    fh_network_status_with_text(fh_status_text("Checking net...", "Checking network status..."));
 }
 
 static void fh_draw_network_status(void)
@@ -560,7 +565,7 @@ static void fh_show_detail(unsigned int index)
             }
         }
         if (key == 13 || key == ' ') {
-            fh_network_status();
+            fh_network_status_with_text(fh_status_text("Downloading...", "Downloading..."));
             fh_render_detail_screen(record);
             fh_download(index);
             if (Peek(CTRL_FH_RESULT)) {

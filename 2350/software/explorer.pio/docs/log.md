@@ -1,5 +1,17 @@
 # Change Log
 
+## v2.26
+
+- Bumped Explorer to v2.26.
+- Added an MSX-MUSIC audio profile to the MSX Explorer ROM detail screen for non-system, non-SCC-class ROMs.
+- Ported the LoadROM YM2413/emu2413 audio engine into Explorer and added runtime FM-PAC expanded-slot handling that reads the bundled FM-PAC BIOS from the Explorer UF2 flash payload.
+- Moved the Explorer ROM cache from RP2350 SRAM to PSRAM so MSX-MUSIC can coexist with the existing Explorer features without overflowing firmware RAM.
+- Updated the Explorer user documentation for MSX-MUSIC profile selection, mapper restrictions, and flash-payload FM-PAC BIOS storage.
+- Allowed SPACE as well as ENTER to execute a ROM from the ROM detail screen when `Action: Run` is selected.
+- Changed the File Hunter ROM download flow to show `Downloading...` instead of the generic network status check message.
+- Removed the WiFi setup hint and F4 special handling from the help page return prompt.
+- Increased the Explorer microSD ROM size limit and PSRAM SD ROM buffer from 2 MB to 4 MB.
+
 ## v2.25
 
 - Bumped Explorer to v2.25.

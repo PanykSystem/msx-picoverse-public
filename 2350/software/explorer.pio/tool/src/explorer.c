@@ -26,6 +26,7 @@
 #include "nextor.h"
 #include "wifibios.h"
 #include "esp8266p_rom.h"
+#include "fmpac_bios.h"
 #include "mapper_detect.h"
 
 #ifndef APP_VERSION
@@ -38,6 +39,7 @@
 #define TARGET_FILE_SIZE        (MENU_COPY_SIZE + CONFIG_AREA_SIZE) // Size of menu ROM + configuration area
 #define WIFI_CONFIG_ROM_SIZE    (8 * 1024)      // Hidden WiFi configuration ROM payload stored after config area
 #define WIFI_BIOS_ROM_SIZE      (16 * 1024)     // Hidden ESP8266P UNAPI BIOS payload used by Sunrise WiFi support
+#define FMPAC_BIOS_ROM_SIZE     (64 * 1024)     // Hidden FM-PAC BIOS payload used by Explorer MSX-MUSIC support
 #define MAX_FILE_NAME_LENGTH    60              // Maximum length of a ROM name
 #define FLASH_START             0x10000000      // Start of the flash memory on the Raspberry Pi Pico
 #define MAX_ROM_FILES           128             // Maximum number of ROM files
@@ -350,7 +352,7 @@ int main(int argc, char *argv[])
     FileInfo files[MAX_ROM_FILES]; // Array to track discovered ROM files
     int file_count = 0;
     int file_index = 1;
-    uint32_t base_offset = TARGET_FILE_SIZE + WIFI_CONFIG_ROM_SIZE + WIFI_BIOS_ROM_SIZE; // Visible ROMs start after hidden WiFi payloads
+    uint32_t base_offset = TARGET_FILE_SIZE + WIFI_CONFIG_ROM_SIZE + WIFI_BIOS_ROM_SIZE + FMPAC_BIOS_ROM_SIZE; // Visible ROMs start after hidden payloads
     size_t total_rom_size = 0;
     size_t config_offset = 0;
     uint8_t *config_buffer = (uint8_t *)malloc(CONFIG_AREA_SIZE); // Configuration area buffer
@@ -592,8 +594,16 @@ int main(int argc, char *argv[])
         return 1;
     }
 
-    // Final flash image layout: [firmware][menu ROM][config area][WiFi config ROM][ESP8266P BIOS][Nextor ROM + scanned ROM payloads]
-    const size_t total_size = firmware_size + MENU_COPY_SIZE + CONFIG_AREA_SIZE + WIFI_CONFIG_ROM_SIZE + WIFI_BIOS_ROM_SIZE + total_rom_size;
+    const size_t fmpac_bios_rom_size = sizeof(______loadrom_pio_fmpac_FMPCCMFC_BIN);
+    if (fmpac_bios_rom_size != FMPAC_BIOS_ROM_SIZE) {
+        printf("Embedded FM-PAC BIOS must be %u bytes (found %zu)\n",
+               (unsigned)FMPAC_BIOS_ROM_SIZE, fmpac_bios_rom_size);
+        free(config_buffer);
+        return 1;
+    }
+
+    // Final flash image layout: [firmware][menu ROM][config area][WiFi config ROM][ESP8266P BIOS][FM-PAC BIOS][Nextor ROM + scanned ROM payloads]
+    const size_t total_size = firmware_size + MENU_COPY_SIZE + CONFIG_AREA_SIZE + WIFI_CONFIG_ROM_SIZE + WIFI_BIOS_ROM_SIZE + FMPAC_BIOS_ROM_SIZE + total_rom_size;
     uint8_t *combined_buffer = (uint8_t *)malloc(total_size);
     if (!combined_buffer) {
         printf("Failed to allocate combined buffer\n");
@@ -622,6 +632,10 @@ int main(int argc, char *argv[])
     // Hidden ESP8266P UNAPI BIOS exposed when Sunrise WiFi Support is enabled.
     memcpy(combined_buffer + offset, ______wifi_bios_ESP8266P_rom, wifi_bios_rom_size);
     offset += WIFI_BIOS_ROM_SIZE;
+
+    // Hidden FM-PAC BIOS exposed when an Explorer ROM is launched with MSX-MUSIC.
+    memcpy(combined_buffer + offset, ______loadrom_pio_fmpac_FMPCCMFC_BIN, fmpac_bios_rom_size);
+    offset += FMPAC_BIOS_ROM_SIZE;
 
 #ifdef DEBUG
     {

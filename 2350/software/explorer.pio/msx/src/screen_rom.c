@@ -40,6 +40,10 @@ static unsigned char record_supports_dual_psg(const ROMRecord *record) {
     return !record_is_folder(record) && !record_is_system_rom(record) && !record_supports_scc_audio(record);
 }
 
+static unsigned char record_supports_msx_music(const ROMRecord *record) {
+    return !record_is_folder(record) && !record_is_system_rom(record) && !record_supports_scc_audio(record);
+}
+
 static void send_detect_mapper(unsigned int index) {
     unsigned char low = (unsigned char)(index & 0xFFu);
     unsigned char high = (unsigned char)((index >> 8) & 0xFFu);
@@ -189,7 +193,7 @@ void show_rom_screen(unsigned int index) {
             if (key == 27) {
                 break;
             }
-            if (key == 13) {
+            if (key == 13 || key == 32) {
                 if (!waiting_mapper && selection == action_selection) {
                     audio_profile = sanitize_audio_profile(record, audio_profile);
                     Poke(CTRL_AUDIO, audio_profile);
@@ -463,6 +467,9 @@ static unsigned char audio_profile_is_supported(const ROMRecord *record, unsigne
     if (audio_profile == AUDIO_PROFILE_DUAL_PSG) {
         return record_supports_dual_psg(record);
     }
+    if (audio_profile == AUDIO_PROFILE_MSX_MUSIC) {
+        return record_supports_msx_music(record);
+    }
     return 0;
 }
 
@@ -482,7 +489,8 @@ static unsigned char next_audio_profile(const ROMRecord *record, unsigned char a
         AUDIO_PROFILE_NONE,
         AUDIO_PROFILE_SCC,
         AUDIO_PROFILE_SCC_PLUS,
-        AUDIO_PROFILE_DUAL_PSG
+        AUDIO_PROFILE_DUAL_PSG,
+        AUDIO_PROFILE_MSX_MUSIC
     };
     const unsigned int audio_count = (unsigned int)(sizeof(audio_profiles) / sizeof(audio_profiles[0]));
     int current = -1;
@@ -526,6 +534,8 @@ static void build_audio_text(const ROMRecord *record, unsigned char audio_profil
         audio_label = "SCC+";
     } else if (audio_profile == AUDIO_PROFILE_DUAL_PSG) {
         audio_label = "Dual PSG";
+    } else if (audio_profile == AUDIO_PROFILE_MSX_MUSIC) {
+        audio_label = "MSX-MUSIC";
     }
     strncpy(out, audio_label, out_size - 1);
     out[out_size - 1] = '\0';

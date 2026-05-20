@@ -50,6 +50,8 @@ WIFICONFIG := ../../wifi/config/ESP8266_config.rom
 WIFICONFIG_H := $(SRCDIR)/wifibios.h
 WIFIBIOS := ../../wifi/bios/ESP8266P.rom
 WIFIBIOS_H := $(SRCDIR)/esp8266p_rom.h
+FMPAC_BIOS := ../../loadrom.pio/fmpac/FMPCCMFC.BIN
+FMPAC_BIOS_H := $(SRCDIR)/fmpac_bios.h
 
 # Helpers
 RM := rm -f
@@ -62,7 +64,7 @@ compile: $(BINDIR)/$(OUTFILE)
 
 package: $(DISDIR)/explorer.exe
 
-$(BINDIR)/$(OUTFILE): $(BINDIR) $(SRCDIR)/$(SOURCES) $(PICOBIN_H) $(PICOBIN) $(MSXMENU_H) $(MSXMENU) $(NEXTOR_H) $(NEXTOR) $(WIFICONFIG_H) $(WIFICONFIG) $(WIFIBIOS_H) $(WIFIBIOS)
+$(BINDIR)/$(OUTFILE): $(BINDIR) $(SRCDIR)/$(SOURCES) $(PICOBIN_H) $(PICOBIN) $(MSXMENU_H) $(MSXMENU) $(NEXTOR_H) $(NEXTOR) $(WIFICONFIG_H) $(WIFICONFIG) $(WIFIBIOS_H) $(WIFIBIOS) $(FMPAC_BIOS_H) $(FMPAC_BIOS)
 	@echo "Compiling $@"
 	$(CC) $(CCFLAGS) -DAPP_VERSION=\"$(VERSION)\" $(SRCDIR)/$(SOURCES) -o $@
 
@@ -86,6 +88,10 @@ $(WIFIBIOS_H): $(WIFIBIOS)
 	@echo "Embedding ESP8266P WiFi BIOS into header"
 	$(UTLDIR)/$(XXD) -i $< $@
 
+$(FMPAC_BIOS_H): $(FMPAC_BIOS)
+	@echo "Embedding FM-PAC BIOS into header"
+	$(UTLDIR)/$(XXD) -i $< $@
+
 $(BINDIR):
 	@mkdir $@
 
@@ -98,5 +104,5 @@ $(DISDIR)/explorer.exe: $(DISDIR) $(BINDIR)/$(OUTFILE)
 
 clean:
 	@echo "Cleaning ...."
-	$(RM) $(BINDIR)/*.exe $(BINDIR)/*.uf2 $(SRCDIR)/multirom.h $(SRCDIR)/menu.h $(SRCDIR)/nextor.h $(SRCDIR)/wifibios.h $(SRCDIR)/esp8266p_rom.h $(BINDIR)/explorer.rom $(BINDIR)/explorer_payload.bin
+	$(RM) $(BINDIR)/*.exe $(BINDIR)/*.uf2 $(SRCDIR)/multirom.h $(SRCDIR)/menu.h $(SRCDIR)/nextor.h $(SRCDIR)/wifibios.h $(SRCDIR)/esp8266p_rom.h $(SRCDIR)/fmpac_bios.h $(BINDIR)/explorer.rom $(BINDIR)/explorer_payload.bin
 	$(RM) $(DISDIR)/*

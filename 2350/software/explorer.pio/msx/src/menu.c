@@ -788,8 +788,6 @@ void displayMenu() {
 // This function will display the help menu on the screen. It will print the help information and the keys to navigate the menu.
 void helpMenu()
 {
-    char key;
-
     Cls();
     Locate(0,0);
     menu_ui_print_title_line();
@@ -841,14 +839,11 @@ void helpMenu()
     menu_ui_print_delimiter_line();
     Locate(0, 22);
     if (use_80_columns) {
-        printf("Press any key to return. F4 opens Wi-Fi setup.");
+        printf("Press any key to return.");
     } else {
-        printf("Any key returns. F4 opens Wi-Fi setup.");
+        printf("Any key returns.");
     }
-    key = (char)bios_chget();
-    if (key == MENU_KEY_F4_CONFIG) {
-        launch_wifi_config();
-    }
+    (void)bios_chget();
     frame_rendered = 0;
 }
 

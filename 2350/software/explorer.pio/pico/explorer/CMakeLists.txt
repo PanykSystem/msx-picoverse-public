@@ -48,6 +48,7 @@ add_executable(explorer
     mp3.c
     emu2212.c
     emu2149.c
+    emu2413.c
     msx_bus.pio
 )
 

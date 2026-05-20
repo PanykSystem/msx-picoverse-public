@@ -31,6 +31,7 @@
 #include "mp3.h"
 #include "emu2212.h"
 #include "emu2149.h"
+#include "emu2413.h"
 #include "msx_bus.pio.h"
 #include "pico/audio_i2s.h"
 #include "sunrise_ide.h"
@@ -49,9 +50,11 @@
 #define WIFI_CONFIG_ROM_SIZE (8u * 1024u)
 #define WIFI_BIOS_FLASH_OFFSET (WIFI_CONFIG_FLASH_OFFSET + WIFI_CONFIG_ROM_SIZE)
 #define WIFI_BIOS_ROM_SIZE (16u * 1024u)
+#define FMPAC_BIOS_FLASH_OFFSET (WIFI_BIOS_FLASH_OFFSET + WIFI_BIOS_ROM_SIZE)
+#define FMPAC_BIOS_ROM_SIZE (64u * 1024u)
 #define WIFI_CONFIG_RETURN_MENU 0xE0u
 #define MONITOR_ADDR    (0xBF7F)    // ROM select register just below the menu control window
-#define CACHE_SIZE      (256u * 1024u)     // 256KB cache size for ROM data (also SD ROM upper limit)
+#define CACHE_SIZE      (256u * 1024u)     // 256KB cache size for ROM data
 
 #define SOURCE_SD_FLAG  0x80 // Flag in the mapper byte indicating the ROM is on SD
 #define FOLDER_FLAG     0x40 // Flag in the mapper byte indicating the record is a folder
@@ -137,12 +140,19 @@
 #define AUDIO_PROFILE_SCC        1u
 #define AUDIO_PROFILE_SCC_PLUS   2u
 #define AUDIO_PROFILE_DUAL_PSG 3u
+#define AUDIO_PROFILE_MSX_MUSIC 4u
 
 #define PSG_SAMPLE_RATE 44100
 #define PSG_CLOCK       1789773
 #define PSG_VOLUME_SHIFT 2
 #define PSG_PORT_REG    0x10u
 #define PSG_PORT_DATA   0x11u
+
+#define MSX_MUSIC_SAMPLE_RATE 44100
+#define MSX_MUSIC_CLOCK       3579545
+#define MSX_MUSIC_PORT_REG    0x7Cu
+#define MSX_MUSIC_PORT_DATA   0x7Du
+#define FMPAC_BIOS_SIZE       FMPAC_BIOS_ROM_SIZE
 
 #define WIFI_MEM_F2_ADDR      0x7F05u
 #define WIFI_MEM_CMD_ADDR     0x7F06u
@@ -229,12 +239,20 @@ typedef struct {
     uint16_t *bank_regs;
 } bank16_ctx_t;
 
+typedef struct {
+    uint8_t page;
+    uint8_t control;
+    uint8_t sram_key_5ffe;
+    uint8_t sram_key_5fff;
+    uint8_t sram[8192];
+} fmpac_state_t;
+
 // This symbol marks the end of the main program in flash.
 // Custom data starts right after it
 extern const uint8_t __flash_binary_end[];
 
-// SRAM buffer to cache ROM data
-static uint8_t rom_sram[CACHE_SIZE];
+// PSRAM-backed buffer to cache ROM data
+static uint8_t *rom_sram = NULL;
 static uint32_t active_rom_size = 0;
 static uint32_t rom_cached_size = 0; // Added for PIO implementation
 // Effective cache capacity used by prepare_rom_source(). Some mappers (e.g.
@@ -400,8 +418,7 @@ static inline uint8_t __not_in_flash_func(wifi_status_read)(void)
 {
     wifi_uart_init_once();
     wifi_service_rx();
-
-    uint8_t status = WIFI_STATUS_QUICK_RX | WIFI_STATUS_FREE_BITS;
+    uint8_t status = 0u;
     uint16_t rx_count = wifi_rx_count_snapshot();
     if (rx_count != 0u) status |= WIFI_STATUS_RX_READY;
     if (rx_count >= WIFI_RX_FIFO_SIZE) status |= WIFI_STATUS_RX_FULL;
@@ -468,6 +485,7 @@ static inline uint8_t __not_in_flash_func(wifi_handle_mem_read)(const uint8_t *w
 // alongside the PSRAM bring-up code; declared here for use by earlier
 // functions such as load_rom_from_sd().
 static psram_region_t sd_rom_region;
+static psram_region_t rom_cache_region;
 static psram_region_t mapper_region;
 static psram_region_t fh_list_region;
 static psram_region_t fh_download_region;
@@ -496,7 +514,7 @@ ROMRecord records[MAX_ROM_RECORDS]; // Array to store the ROM records
 #define SD_PATH_BUFFER_SIZE 19000
 #define MIN_ROM_SIZE       8192
 #define MAX_ROM_SIZE       (15u * 1024u * 1024u)
-#define SD_ROM_MAX_SIZE    (2u * 1024u * 1024u) // PSRAM region capacity for SD-loaded ROMs
+#define SD_ROM_MAX_SIZE    (4u * 1024u * 1024u) // PSRAM region capacity for SD-loaded ROMs
 #define MAPPER_SUNRISE_USB        10
 #define MAPPER_SUNRISE_MAPPER_USB 11
 #define MAPPER_SYSTEM             MAPPER_SUNRISE_USB
@@ -608,11 +626,18 @@ static struct audio_buffer_pool *dual_psg_audio_pool;
 static bool dual_psg_ready = false;
 static bool dual_psg_audio_started = false;
 
+static OPLL *msx_music_instance = NULL;
+static spin_lock_t *msx_music_lock = NULL;
+static struct audio_buffer_pool *msx_music_audio_pool;
+static bool msx_music_ready = false;
+static bool msx_music_audio_started = false;
+
 typedef enum {
     AUDIO_MODE_NONE = 0,
     AUDIO_MODE_SCC,
     AUDIO_MODE_SCC_PLUS,
     AUDIO_MODE_DUAL_PSG,
+    AUDIO_MODE_MSX_MUSIC,
 } audio_mode_t;
 
 static const char *EXCLUDED_SD_FOLDERS[] = {
@@ -655,6 +680,9 @@ static audio_mode_t resolve_audio_mode(uint8_t mapper, uint8_t requested_profile
     }
     if (requested_profile == AUDIO_PROFILE_DUAL_PSG) {
         return AUDIO_MODE_DUAL_PSG;
+    }
+    if (requested_profile == AUDIO_PROFILE_MSX_MUSIC) {
+        return AUDIO_MODE_MSX_MUSIC;
     }
     return AUDIO_MODE_NONE;
 }
@@ -1739,7 +1767,7 @@ static bool load_rom_from_sd(uint16_t record_index, uint32_t size) {
         return false;
     }
 
-    // SD ROMs are streamed into the 2MB PSRAM region so rom_sram remains
+    // SD ROMs are streamed into the 4MB PSRAM region so rom_sram remains
     // available for flash-resident mapper caching. Bring PSRAM up lazily.
     if (!psram_bring_up_once()) {
         return false;
@@ -1943,6 +1971,8 @@ static void psram_mem_init(void)
 {
     psram_mgr.next_free = 0;
     memset(&sd_rom_region, 0, sizeof(sd_rom_region));
+    memset(&rom_cache_region, 0, sizeof(rom_cache_region));
+    rom_sram = NULL;
     memset(&mapper_region, 0, sizeof(mapper_region));
     memset(&fh_list_region, 0, sizeof(fh_list_region));
     memset(&fh_download_region, 0, sizeof(fh_download_region));
@@ -1968,8 +1998,8 @@ static bool psram_bring_up_once(void)
     if (psram_mgr.initialised) return true;
     if (!psram_init()) return false;
     psram_mem_init();
-    // 2MB region for SD-loaded ROMs (covers 99% of MSX ROMs).
-    if (!psram_alloc(2u * 1024u * 1024u, &sd_rom_region)) return false;
+    // 4MB region for SD-loaded ROMs.
+    if (!psram_alloc(SD_ROM_MAX_SIZE, &sd_rom_region)) return false;
     psram_mgr.initialised = true;
     return true;
 }
@@ -1979,6 +2009,19 @@ static bool psram_prepare_mapper_region(void)
     if (!psram_bring_up_once()) return false;
     if (mapper_region.size == MAPPER_SIZE) return true;
     return psram_alloc(MAPPER_SIZE, &mapper_region);
+}
+
+static bool psram_prepare_rom_cache(void)
+{
+    if (!psram_bring_up_once()) return false;
+    if (rom_cache_region.size == CACHE_SIZE)
+    {
+        rom_sram = rom_cache_region.ptr;
+        return true;
+    }
+    if (!psram_alloc(CACHE_SIZE, &rom_cache_region)) return false;
+    rom_sram = rom_cache_region.ptr;
+    return true;
 }
 
 static bool fh_prepare_list_region(void)
@@ -2000,17 +2043,17 @@ static inline void __not_in_flash_func(prepare_rom_source)(
 
     // For SD-loaded ROMs rom_data points at PSRAM (sd_rom_region.ptr) with
     // offset 0; for flash-resident ROMs it points at QSPI flash. In both
-    // cases we copy the leading rom_cache_capacity bytes into rom_sram for
-    // fast access, leaving the tail to be served from the source via XIP.
+    // cases we copy the leading rom_cache_capacity bytes into the PSRAM ROM
+    // cache, leaving the tail to be served from the source via XIP.
     if (preferred_size != 0u && (available_length == 0u || available_length > preferred_size))
     {
         available_length = preferred_size;
     }
 
-    if (cache_enable && available_length > 0u)
+    if (cache_enable && available_length > 0u && psram_prepare_rom_cache())
     {
         uint32_t cap = rom_cache_capacity;
-        if (cap > sizeof(rom_sram)) cap = sizeof(rom_sram);
+        if (cap > CACHE_SIZE) cap = CACHE_SIZE;
         uint32_t bytes_to_cache = (available_length > cap) ? cap : available_length;
 
         gpio_init(PIN_WAIT);
@@ -2059,7 +2102,7 @@ static inline void __not_in_flash_func(prepare_sunrise_mapper_rom_source)(
     const uint8_t *rom_base = rom_data + offset;
     uint32_t available_length = active_rom_size;
 
-    if (cache_enable && available_length > 0u)
+    if (cache_enable && available_length > 0u && psram_prepare_rom_cache())
     {
         uint32_t bytes_to_cache = (available_length > CACHE_SIZE)
                                   ? CACHE_SIZE
@@ -2368,6 +2411,150 @@ static void start_dual_psg_audio(void)
         multicore_launch_core1(core1_dual_psg_audio);
 }
 
+static void __not_in_flash_func(msx_music_init)(void)
+{
+    if (msx_music_ready)
+        return;
+
+    msx_music_instance = OPLL_new(MSX_MUSIC_CLOCK, MSX_MUSIC_SAMPLE_RATE);
+    if (!msx_music_instance)
+        return;
+
+    if (!msx_music_lock)
+        msx_music_lock = spin_lock_instance(spin_lock_claim_unused(true));
+
+    OPLL_reset(msx_music_instance);
+    OPLL_setChipType(msx_music_instance, OPLL_2413_TONE);
+    OPLL_resetPatch(msx_music_instance, OPLL_2413_TONE);
+    msx_pio_io_bus_init();
+    msx_music_ready = true;
+}
+
+static inline int16_t __not_in_flash_func(msx_music_calc_sample)(void)
+{
+    if (!msx_music_ready)
+        return 0;
+
+    uint32_t save = spin_lock_blocking(msx_music_lock);
+    int16_t sample = OPLL_calc(msx_music_instance);
+    spin_unlock(msx_music_lock, save);
+    return sample;
+}
+
+static inline void __not_in_flash_func(msx_music_write_io)(uint8_t port, uint8_t data)
+{
+    if (!msx_music_ready)
+        return;
+
+    uint32_t save = spin_lock_blocking(msx_music_lock);
+    OPLL_writeIO(msx_music_instance, port, data);
+    spin_unlock(msx_music_lock, save);
+}
+
+static inline void __not_in_flash_func(msx_music_service_io)(void)
+{
+    if (!msx_music_ready)
+        return;
+
+    uint16_t io_addr;
+    uint8_t io_data;
+    while (pio_try_get_io_write(&io_addr, &io_data))
+    {
+        uint8_t port = io_addr & 0xFFu;
+        if (port == MSX_MUSIC_PORT_REG || port == MSX_MUSIC_PORT_DATA)
+            msx_music_write_io(port, io_data);
+    }
+
+    while (pio_try_get_io_read(&io_addr))
+    {
+        pio_sm_put_blocking(msx_io_bus.pio_read, msx_io_bus.sm_io_read,
+                            pio_build_token(false, 0xFFu));
+    }
+}
+
+static void __no_inline_not_in_flash_func(core1_msx_music_audio)(void)
+{
+    while (true)
+    {
+        while (true)
+        {
+            msx_music_service_io();
+            struct audio_buffer *buffer = take_audio_buffer(msx_music_audio_pool, false);
+            if (buffer)
+            {
+                int16_t *samples = (int16_t *)buffer->buffer->bytes;
+                for (int i = 0; i < SCC_AUDIO_BUFFER_SAMPLES; i++)
+                {
+                    msx_music_service_io();
+                    int16_t sample = msx_music_calc_sample();
+                    samples[i * 2] = sample;
+                    samples[i * 2 + 1] = sample;
+                }
+                buffer->sample_count = SCC_AUDIO_BUFFER_SAMPLES;
+                give_audio_buffer(msx_music_audio_pool, buffer);
+                break;
+            }
+            tight_loop_contents();
+        }
+    }
+}
+
+static void msx_music_audio_init(void)
+{
+    if (msx_music_audio_started)
+        return;
+
+    gpio_init(I2S_MUTE_PIN);
+    gpio_set_dir(I2S_MUTE_PIN, GPIO_OUT);
+    gpio_put(I2S_MUTE_PIN, 0);
+
+    static audio_format_t msx_music_audio_format = {
+        .sample_freq = MSX_MUSIC_SAMPLE_RATE,
+        .format = AUDIO_BUFFER_FORMAT_PCM_S16,
+        .channel_count = 2,
+    };
+
+    static struct audio_buffer_format msx_music_producer_format = {
+        .format = &msx_music_audio_format,
+        .sample_stride = 4,
+    };
+
+    msx_music_audio_pool = audio_new_producer_pool(&msx_music_producer_format, 3, SCC_AUDIO_BUFFER_SAMPLES);
+
+    int dma_channel = -1;
+    for (int ch = 0; ch < NUM_DMA_CHANNELS; ch++) {
+        if (!dma_channel_is_claimed(ch)) {
+            dma_channel = ch;
+            break;
+        }
+    }
+    if (dma_channel < 0) {
+        msx_music_audio_pool = NULL;
+        return;
+    }
+
+    static struct audio_i2s_config msx_music_i2s_config = {
+        .data_pin = I2S_DATA_PIN,
+        .clock_pin_base = I2S_BCLK_PIN,
+        .dma_channel = 0,
+        .pio_sm = 2,
+    };
+    msx_music_i2s_config.dma_channel = (uint)dma_channel;
+
+    audio_i2s_setup(&msx_music_audio_format, &msx_music_i2s_config);
+    audio_i2s_connect(msx_music_audio_pool);
+    audio_i2s_set_enabled(true);
+    msx_music_audio_started = true;
+}
+
+static void start_msx_music_audio(void)
+{
+    msx_music_init();
+    msx_music_audio_init();
+    if (msx_music_audio_pool)
+        multicore_launch_core1(core1_msx_music_audio);
+}
+
 static inline uint8_t __not_in_flash_func(mapper_page_from_reg)(uint8_t reg)
 {
     return (uint8_t)(reg % MAPPER_PAGES);
@@ -2413,6 +2600,61 @@ static inline void __not_in_flash_func(handle_sunrise_write)(uint16_t addr, uint
     {
         sunrise_ide_handle_write(sctx->ide, addr, data);
     }
+}
+
+static inline bool __not_in_flash_func(fmpac_sram_enabled)(const fmpac_state_t *fmpac)
+{
+    return fmpac->sram_key_5ffe == 0x4Du && fmpac->sram_key_5fff == 0x69u;
+}
+
+static inline void __not_in_flash_func(fmpac_handle_write)(fmpac_state_t *fmpac, uint16_t addr, uint8_t data)
+{
+    if (addr == 0x7FF4u)
+    {
+        msx_music_write_io(MSX_MUSIC_PORT_REG, data);
+    }
+    else if (addr == 0x7FF5u)
+    {
+        msx_music_write_io(MSX_MUSIC_PORT_DATA, data);
+    }
+    else if (addr == 0x7FF6u)
+    {
+        fmpac->control = data;
+    }
+    else if (addr == 0x7FF7u)
+    {
+        fmpac->page = data & 0x03u;
+    }
+    else if (addr == 0x5FFEu)
+    {
+        fmpac->sram_key_5ffe = data;
+    }
+    else if (addr == 0x5FFFu)
+    {
+        fmpac->sram_key_5fff = data;
+    }
+    else if (fmpac_sram_enabled(fmpac) && addr >= 0x4000u && addr <= 0x5FFFu)
+    {
+        fmpac->sram[addr - 0x4000u] = data;
+    }
+}
+
+static inline uint8_t __not_in_flash_func(fmpac_handle_read)(const fmpac_state_t *fmpac, const uint8_t *bios_base, uint16_t addr)
+{
+    if (addr == 0x7FF6u)
+        return fmpac->control;
+    if (addr == 0x7FF7u)
+        return fmpac->page;
+    if (fmpac_sram_enabled(fmpac) && addr >= 0x4000u && addr <= 0x5FFFu)
+        return fmpac->sram[addr - 0x4000u];
+
+    if (addr >= 0x4000u && addr <= 0x7FFFu)
+    {
+        uint32_t rel = ((uint32_t)(fmpac->page & 0x03u) << 14) | (addr & 0x3FFFu);
+        if (rel < FMPAC_BIOS_SIZE)
+            return bios_base[rel];
+    }
+    return 0xFFu;
 }
 
 static inline void __not_in_flash_func(handle_menu_write)(uint16_t addr, uint8_t data, void *ctx)
@@ -4254,6 +4496,11 @@ static int __no_inline_not_in_flash_func(loadrom_filehunter)(void)
 //load the MSX Menu ROM into the MSX
 int __no_inline_not_in_flash_func(loadrom_msx_menu)(uint32_t offset)
 {
+    if (!psram_prepare_rom_cache())
+    {
+        return 0xFFFF;
+    }
+
     //setup the rom_sram buffer for the 32KB ROM
     gpio_init(PIN_WAIT); // Init wait signal pin
     gpio_set_dir(PIN_WAIT, GPIO_OUT); // Set the WAIT signal as output
@@ -6046,6 +6293,11 @@ void __no_inline_not_in_flash_func(loadrom_ascii16x)(uint32_t offset, bool cache
 {
     (void)cache_enable;
 
+    if (!psram_prepare_rom_cache())
+    {
+        return;
+    }
+
     const uint8_t *rom_base;
     uint32_t available_length;
     // Don't preload via prepare_rom_source — bcache manages SRAM directly.
@@ -6261,6 +6513,204 @@ static inline void __not_in_flash_func(loadrom_manbow2_setup)(
     }
 
     *writable_sram_out = writable_sram;
+}
+
+static inline void __not_in_flash_func(handle_ascii16x_write_simple)(uint16_t addr, uint8_t data, uint16_t *bank_regs)
+{
+    if (addr >= 0x6000u && addr <= 0x67FFu)
+        bank_regs[0] = data;
+    else if (addr >= 0x7000u && addr <= 0x77FFu)
+        bank_regs[1] = data;
+}
+
+static void __not_in_flash_func(fmpac_wait_for_expanded_bootstrap)(void)
+{
+    static const uint8_t bootstrap_rom[] = {
+        0x41, 0x42, 0x0A, 0x40, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0xF3, 0xDB, 0xF4, 0xF6, 0x80, 0xD3, 0xF4, 0xC7
+    };
+
+    msx_pio_bus_init();
+
+    bool restart_detected = false;
+    bool init_called = false;
+
+    while (!restart_detected)
+    {
+        uint16_t waddr;
+        uint8_t wdata;
+        while (pio_try_get_write(&waddr, &wdata))
+        {
+        }
+
+        if (!pio_sm_is_rx_fifo_empty(msx_bus.pio, msx_bus.sm_read))
+        {
+            uint16_t addr = (uint16_t)pio_sm_get(msx_bus.pio, msx_bus.sm_read);
+            if (init_called && addr == 0x0000u)
+            {
+                pio_sm_put_blocking(msx_bus.pio, msx_bus.sm_read, pio_build_token(false, 0xFFu));
+                restart_detected = true;
+            }
+            else
+            {
+                if (addr >= 0x400Au && addr <= 0x4011u) init_called = true;
+                bool in_window = (addr >= 0x4000u && addr <= 0x7FFFu);
+                uint8_t data = 0xFFu;
+                if (in_window)
+                {
+                    uint32_t rel = addr - 0x4000u;
+                    if (rel < sizeof(bootstrap_rom)) data = bootstrap_rom[rel];
+                }
+                pio_sm_put_blocking(msx_bus.pio, msx_bus.sm_read, pio_build_token(in_window, data));
+            }
+        }
+        else if (init_called && !gpio_get(PIN_RD) && ((gpio_get_all() & 0xFFFFu) == 0x0000u))
+        {
+            restart_detected = true;
+        }
+    }
+
+    pio_sm_set_enabled(msx_bus.pio, msx_bus.sm_read, false);
+    pio_sm_set_enabled(msx_bus.pio, msx_bus.sm_write, false);
+    gpio_init(PIN_WAIT);
+    gpio_set_dir(PIN_WAIT, GPIO_OUT);
+    gpio_put(PIN_WAIT, 0);
+}
+
+void __no_inline_not_in_flash_func(loadrom_fmpac)(uint32_t offset, bool cache_enable, uint8_t mapper)
+{
+    fmpac_wait_for_expanded_bootstrap();
+
+    uint8_t bank8_regs[4] = {0, 1, 2, 3};
+    uint8_t ascii16_regs[2] = {0, 1};
+    uint16_t neo8_regs[6] = {0, 1, 2, 3, 4, 5};
+    uint16_t neo16_regs[3] = {0, 1, 2};
+    uint16_t ascii16x_regs[2] = {0, 0};
+
+    const uint8_t *rom_base;
+    uint32_t available_length;
+    prepare_rom_source(offset, cache_enable, 0u, &rom_base, &available_length);
+    const uint8_t *fmpac_bios_base = flash_rom + FMPAC_BIOS_FLASH_OFFSET;
+
+    uint8_t subslot_reg = 0x00u;
+    static fmpac_state_t fmpac;
+    memset(&fmpac, 0, sizeof(fmpac));
+    fmpac.control = 0x10u;
+
+    bank8_ctx_t bank8_ctx = { .bank_regs = bank8_regs };
+    bank8_ctx_t ascii16_ctx = { .bank_regs = ascii16_regs };
+    bank16_ctx_t neo8_ctx = { .bank_regs = neo8_regs };
+    bank16_ctx_t neo16_ctx = { .bank_regs = neo16_regs };
+
+    msx_pio_bus_init();
+
+    while (true)
+    {
+        uint16_t waddr;
+        uint8_t wdata;
+        while (pio_try_get_write(&waddr, &wdata))
+        {
+            if (waddr == 0xFFFFu)
+            {
+                subslot_reg = wdata;
+                continue;
+            }
+
+            uint8_t page = (waddr >> 14) & 0x03u;
+            uint8_t active_subslot = (subslot_reg >> (page * 2)) & 0x03u;
+            if (active_subslot == 0)
+            {
+                switch (mapper)
+                {
+                    case 5:  handle_ascii8_write(waddr, wdata, &bank8_ctx); break;
+                    case 6:  handle_ascii16_write(waddr, wdata, &ascii16_ctx); break;
+                    case 7:  handle_konami_write(waddr, wdata, &bank8_ctx); break;
+                    case 8:  handle_neo8_write(waddr, wdata, &neo8_ctx); break;
+                    case 9:  handle_neo16_write(waddr, wdata, &neo16_ctx); break;
+                    case 12: handle_ascii16x_write_simple(waddr, wdata, ascii16x_regs); break;
+                }
+            }
+            else if (active_subslot == 3)
+            {
+                fmpac_handle_write(&fmpac, waddr, wdata);
+            }
+        }
+
+        if (!pio_sm_is_rx_fifo_empty(msx_bus.pio, msx_bus.sm_read))
+        {
+            uint16_t addr = (uint16_t)pio_sm_get(msx_bus.pio, msx_bus.sm_read);
+            uint8_t data = 0xFFu;
+            bool in_window = true;
+
+            if (addr == 0xFFFFu)
+            {
+                data = (uint8_t)~subslot_reg;
+            }
+            else
+            {
+                uint8_t page = (addr >> 14) & 0x03u;
+                uint8_t active_subslot = (subslot_reg >> (page * 2)) & 0x03u;
+                if (active_subslot == 0)
+                {
+                    uint32_t rel = 0;
+                    bool mapped = false;
+
+                    switch (mapper)
+                    {
+                        case 1:
+                        case 2:
+                            mapped = (addr >= 0x4000u && addr <= 0xBFFFu);
+                            rel = addr - 0x4000u;
+                            break;
+                        case 5:
+                        case 7:
+                            mapped = (addr >= 0x4000u && addr <= 0xBFFFu);
+                            if (mapped)
+                                rel = ((uint32_t)bank8_regs[(addr - 0x4000u) >> 13] << 13) | (addr & 0x1FFFu);
+                            break;
+                        case 4:
+                            mapped = (addr <= 0xBFFFu);
+                            rel = addr;
+                            break;
+                        case 6:
+                            mapped = (addr >= 0x4000u && addr <= 0xBFFFu);
+                            if (mapped)
+                                rel = ((uint32_t)ascii16_regs[(addr >> 15) & 1u] << 14) | (addr & 0x3FFFu);
+                            break;
+                        case 8:
+                            mapped = (addr <= 0xBFFFu);
+                            if (mapped && (addr >> 13) < 6u)
+                                rel = ((uint32_t)(neo8_regs[addr >> 13] & 0x0FFFu) << 13) | (addr & 0x1FFFu);
+                            break;
+                        case 9:
+                            mapped = (addr <= 0xBFFFu);
+                            if (mapped && (addr >> 14) < 3u)
+                                rel = ((uint32_t)(neo16_regs[addr >> 14] & 0x0FFFu) << 14) | (addr & 0x3FFFu);
+                            break;
+                        case 12:
+                            mapped = true;
+                            rel = ((uint32_t)ascii16x_regs[((addr >> 14) & 1u) ? 0u : 1u] << 14) | (addr & 0x3FFFu);
+                            break;
+                        case 13:
+                            mapped = true;
+                            rel = addr;
+                            break;
+                    }
+
+                    if (mapped && (available_length == 0u || rel < available_length))
+                        data = read_rom_byte(rom_base, rel);
+                }
+                else if (active_subslot == 3 && addr >= 0x4000u && addr <= 0x7FFFu)
+                {
+                    data = fmpac_handle_read(&fmpac, fmpac_bios_base, addr);
+                }
+            }
+
+            pio_sm_put_blocking(msx_bus.pio, msx_bus.sm_read, pio_build_token(in_window, data));
+        }
+
+        tight_loop_contents();
+    }
 }
 
 // loadrom_manbow2 - Manbow2 (Konami SCC-banked + AMD flash) without SCC audio
@@ -6568,8 +7018,15 @@ int __no_inline_not_in_flash_func(main)()
     bool scc_audio = (audio_mode == AUDIO_MODE_SCC || audio_mode == AUDIO_MODE_SCC_PLUS);
     if (audio_mode == AUDIO_MODE_DUAL_PSG) {
         start_dual_psg_audio();
+    } else if (audio_mode == AUDIO_MODE_MSX_MUSIC) {
+        start_msx_music_audio();
     }
     bool wifi_support = (ctrl_wifi_support != 0u) && is_system_mapper(mapper);
+
+    if (audio_mode == AUDIO_MODE_MSX_MUSIC) {
+        loadrom_fmpac(rom_offset, cache_enable, mapper);
+        continue;
+    }
 
     // Load the selected ROM into the MSX according to the mapper
     switch (mapper) {
