@@ -150,6 +150,7 @@
 
 #define MSX_MUSIC_SAMPLE_RATE 44100
 #define MSX_MUSIC_CLOCK       3579545
+#define MSX_MUSIC_VOLUME_SHIFT 2
 #define MSX_MUSIC_PORT_REG    0x7Cu
 #define MSX_MUSIC_PORT_DATA   0x7Du
 #define FMPAC_BIOS_SIZE       FMPAC_BIOS_ROM_SIZE
@@ -2438,7 +2439,7 @@ static inline int16_t __not_in_flash_func(msx_music_calc_sample)(void)
     uint32_t save = spin_lock_blocking(msx_music_lock);
     int16_t sample = OPLL_calc(msx_music_instance);
     spin_unlock(msx_music_lock, save);
-    return sample;
+    return clamp_i16((int32_t)sample << MSX_MUSIC_VOLUME_SHIFT);
 }
 
 static inline void __not_in_flash_func(msx_music_write_io)(uint8_t port, uint8_t data)

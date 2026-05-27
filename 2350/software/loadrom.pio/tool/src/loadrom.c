@@ -733,7 +733,7 @@ int main(int argc, char *argv[])
             return 1;
         }
 
-        uint8_t base_rom_type = (uint8_t)(rom_type & ~(0x80u | 0x40u | ROM_TYPE_WIFI_FLAG | ROM_TYPE_DUAL_PSG_FLAG | ROM_TYPE_MSX_MUSIC_FLAG));
+        uint8_t base_rom_type = (uint8_t)(rom_type & ~(0x80u | 0x40u | ROM_TYPE_WIFI_FLAG));
         printf("ROM Type: %s [Embedded]\n", rom_types[base_rom_type]);
         printf("ROM Name: %s\n", sunrise_name);
         printf("ROM Size: %u bytes\n", sunrise_rom_size);

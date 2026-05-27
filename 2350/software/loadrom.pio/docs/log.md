@@ -1,5 +1,11 @@
 # Change Log
 
+## v2.58
+
+- Bumped the loadrom sub-project version to v2.58.
+- Raised the MSX-MUSIC/FM-PAC audio output gain to match the existing SCC, SCC+, and Dual PSG I2S volume boost while preserving sample clipping protection.
+- Fixed embedded Sunrise+Mapper SD and Carnivore2 SD/USB type decoding so system type values 16-18 are not mistaken for audio-flagged external ROMs.
+
 ## v2.57
 
 - Bumped the loadrom sub-project version to v2.57.

@@ -137,6 +137,27 @@ static inline audio_mode_t resolve_audio_mode(uint8_t rom_type, uint8_t base_rom
     return AUDIO_MODE_NONE;
 }
 
+static inline bool is_system_rom_type(uint8_t base_rom_type)
+{
+    return base_rom_type >= 10u && base_rom_type <= 18u &&
+           base_rom_type != 12u && base_rom_type != 13u && base_rom_type != 14u;
+}
+
+static inline bool is_embedded_nextor_record(const char *rom_name)
+{
+    static const char prefix[] = "Nextor ";
+    return memcmp(rom_name, prefix, sizeof(prefix) - 1u) == 0;
+}
+
+static inline uint8_t decode_base_rom_type(uint8_t rom_type, const char *rom_name)
+{
+    uint8_t system_candidate = rom_type & ~(SCC_FLAG | SCC_PLUS_FLAG | WIFI_FLAG);
+    if (is_system_rom_type(system_candidate) && is_embedded_nextor_record(rom_name))
+        return system_candidate;
+
+    return rom_type & ~(SCC_FLAG | SCC_PLUS_FLAG | DUAL_PSG_FLAG | MSX_MUSIC_FLAG);
+}
+
 // -----------------------------------------------------------------------
 // Sunrise WiFi memio backend
 // -----------------------------------------------------------------------
@@ -1039,7 +1060,7 @@ static inline int16_t __not_in_flash_func(msx_music_calc_sample)(void)
     uint32_t save = spin_lock_blocking(msx_music_lock);
     int16_t sample = OPLL_calc(msx_music_instance);
     spin_unlock(msx_music_lock, save);
-    return sample;
+    return clamp_i16((int32_t)sample << MSX_MUSIC_VOLUME_SHIFT);
 }
 
 static inline void __not_in_flash_func(msx_music_write_io)(uint8_t port, uint8_t data)
@@ -4028,7 +4049,7 @@ int __no_inline_not_in_flash_func(main)()
     uint8_t rom_type = rom[ROM_NAME_MAX];
 
     bool wifi_enabled = (rom_type & WIFI_FLAG) != 0;
-    uint8_t base_rom_type = rom_type & ~(SCC_FLAG | SCC_PLUS_FLAG | WIFI_FLAG | DUAL_PSG_FLAG | MSX_MUSIC_FLAG);
+    uint8_t base_rom_type = decode_base_rom_type(rom_type, rom_name);
 
     if ((base_rom_type == 11u || base_rom_type == 16u
          || base_rom_type == 17u || base_rom_type == 18u) && !psram_init())
@@ -4046,7 +4067,7 @@ int __no_inline_not_in_flash_func(main)()
     // Resolve which (single) on-cartridge audio engine to enable. The
     // resolver enforces mutual exclusion: only one of SCC / SCC+ / dual
     // PSG / MSX-MUSIC (or any future chip) can be active per ROM.
-    bool system_mode = base_rom_type >= 10u && base_rom_type <= 18u && base_rom_type != 12u && base_rom_type != 13u && base_rom_type != 14u;
+    bool system_mode = is_system_rom_type(base_rom_type);
     audio_mode_t audio_mode = resolve_audio_mode(rom_type, base_rom_type, system_mode);
     bool scc_emulation = (audio_mode == AUDIO_MODE_SCC);
     bool scc_plus      = (audio_mode == AUDIO_MODE_SCC_PLUS);

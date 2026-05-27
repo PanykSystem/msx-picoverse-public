@@ -97,6 +97,7 @@ typedef struct {
 // MSX-MUSIC / YM2413 emulation constants
 #define MSX_MUSIC_SAMPLE_RATE 44100
 #define MSX_MUSIC_CLOCK       3579545
+#define MSX_MUSIC_VOLUME_SHIFT 2
 #define MSX_MUSIC_PORT_REG    0x7Cu
 #define MSX_MUSIC_PORT_DATA   0x7Du
 

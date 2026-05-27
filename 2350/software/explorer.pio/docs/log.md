@@ -1,5 +1,10 @@
 # Change Log
 
+## v2.27
+
+- Bumped Explorer to v2.27.
+- Raised the MSX-MUSIC/FM-PAC audio output gain to match the existing SCC, SCC+, and Dual PSG I2S volume boost while preserving sample clipping protection.
+
 ## v2.26
 
 - Bumped Explorer to v2.26.
