@@ -109,7 +109,7 @@ static inline void __not_in_flash_func(prepare_rom_source)(
             true);                           // start immediately
         dma_channel_wait_for_finish_blocking(dma_chan);
         dma_channel_unclaim(dma_chan);
-        gpio_put(PIN_WAIT, 1);
+        gpio_set_dir(PIN_WAIT, GPIO_IN);
 
         rom_cached_size = bytes_to_cache;
 
@@ -186,7 +186,7 @@ static void msx_pio_bus_init(void)
     sm_config_set_in_shift(&cfg_read, false, false, 16);
     sm_config_set_out_pins(&cfg_read, PIN_D0, 8);
     sm_config_set_out_shift(&cfg_read, true, false, 32);
-    sm_config_set_sideset_pins(&cfg_read, PIN_WAIT);
+    sm_config_set_set_pins(&cfg_read, PIN_WAIT, 1);
     sm_config_set_jmp_pin(&cfg_read, PIN_RD);
     sm_config_set_clkdiv(&cfg_read, 1.0f);
     pio_sm_init(msx_bus.pio, msx_bus.sm_read, msx_bus.offset_read, &cfg_read);
@@ -201,8 +201,9 @@ static void msx_pio_bus_init(void)
     pio_sm_init(msx_bus.pio, msx_bus.sm_write, msx_bus.offset_write, &cfg_write);
 
     // ----- Pin configuration for PIO -----
+    pio_sm_set_pins_with_mask(msx_bus.pio, msx_bus.sm_read, 0u, (1u << PIN_WAIT));
     pio_gpio_init(msx_bus.pio, PIN_WAIT);
-    pio_sm_set_consecutive_pindirs(msx_bus.pio, msx_bus.sm_read, PIN_WAIT, 1, true);
+    pio_sm_set_consecutive_pindirs(msx_bus.pio, msx_bus.sm_read, PIN_WAIT, 1, false);
 
     for (uint pin = PIN_D0; pin <= PIN_D7; ++pin)
     {
@@ -210,8 +211,6 @@ static void msx_pio_bus_init(void)
     }
     pio_sm_set_consecutive_pindirs(msx_bus.pio, msx_bus.sm_read, PIN_D0, 8, false);
     pio_sm_set_consecutive_pindirs(msx_bus.pio, msx_bus.sm_write, PIN_D0, 8, false);
-
-    gpio_put(PIN_WAIT, 1);
 
     pio_sm_set_enabled(msx_bus.pio, msx_bus.sm_read, true);
     pio_sm_set_enabled(msx_bus.pio, msx_bus.sm_write, true);

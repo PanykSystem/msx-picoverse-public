@@ -11,7 +11,7 @@
 ;   GPIO 25     = /WR       (active-low write strobe)
 ;   GPIO 26     = /IORQ     (active-low I/O request)
 ;   GPIO 27     = /SLTSL    (unused — joystick uses I/O only)
-;   GPIO 28     = /WAIT     (active-low, driven by PIO side-set)
+;   GPIO 28     = /WAIT     (active-low, open-drain via PIO pindir)
 ;   GPIO 29     = BUSSDIR
 ;
 ; The joystick firmware intercepts PSG I/O ports:
@@ -35,13 +35,13 @@
 ; Intercepts I/O read cycles (/IORQ + /RD) and holds /WAIT while
 ; waiting for the CPU to supply the response byte.
 ;
-; Side-set: 1 pin = /WAIT (GPIO 28, active-low)
-;   side 1 = /WAIT released   (Z80 runs)
-;   side 0 = /WAIT asserted   (Z80 frozen)
+; /WAIT is open-drain: the PIO output value is preloaded LOW.
+;   set pindirs, 1 = /WAIT asserted   (Z80 frozen)
+;   set pindirs, 0 = /WAIT released   (hi-Z, MSX pull-up restores high)
 ;
 ; in_base     = GPIO 0  (A0), 16 pins
 ; out_base    = GPIO 16 (D0), 8 pins
-; sideset_pin = GPIO 28 (/WAIT)
+; set_base    = GPIO 28 (/WAIT)
 ; jmp_pin     = /RD (GPIO 24)
 ;
 ; TX FIFO data token from CPU (16 bits):
@@ -50,23 +50,22 @@
 ;                          or partial mask for open-drain)
 
 .program msx_joy_io_read
-.side_set 1 opt
 
 .wrap_target
 wait_iorq:
-    wait 0 gpio 26     side 1     ; Wait for /IORQ=0. /WAIT released.
-    jmp pin wait_iorq   side 1     ; If /RD=1 (no read), loop back
-    nop                 side 0     ; Assert /WAIT=0 immediately to freeze Z80
-    in pins, 16         side 0     ; Capture A0..A15 into ISR
-    push block          side 0     ; Send address to CPU via RX FIFO
-    pull block          side 0     ; Stall until CPU responds (Z80 frozen)
-    out pins, 8         side 0     ; Drive D0..D7 with response byte
-    out pindirs, 8      side 0     ; Set pindirs (partial mask for open-drain)
-    nop                 side 1 [1] ; Release /WAIT; data valid. 2-cycle hold.
-    wait 1 gpio 24      side 1     ; Wait for /RD=1 (bus cycle complete)
-    set x, 0            side 1     ; Prepare zero
-    mov osr, x          side 1     ; Load zero into OSR
-    out pindirs, 8      side 1     ; Tri-state D0..D7
+    wait 0 gpio 26                ; Wait for /IORQ=0. /WAIT released.
+    jmp pin wait_iorq             ; If /RD=1 (no read), loop back
+    set pindirs, 1                ; Assert /WAIT=0 immediately to freeze Z80
+    in pins, 16                   ; Capture A0..A15 into ISR
+    push block                    ; Send address to CPU via RX FIFO
+    pull block                    ; Stall until CPU responds (Z80 frozen)
+    out pins, 8                   ; Drive D0..D7 with response byte
+    out pindirs, 8                ; Set pindirs (partial mask for open-drain)
+    set pindirs, 0         [1]    ; Release /WAIT as hi-Z; data valid.
+    wait 1 gpio 24                ; Wait for /RD=1 (bus cycle complete)
+    set x, 0                      ; Prepare zero
+    mov osr, x                    ; Load zero into OSR
+    out pindirs, 8                ; Tri-state D0..D7
 .wrap
 
 ; ===================================================================

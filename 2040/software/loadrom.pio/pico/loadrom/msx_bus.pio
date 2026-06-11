@@ -15,7 +15,7 @@
 ;   GPIO 25     = /WR       (active-low write strobe)
 ;   GPIO 26     = /IORQ     (active-low I/O request)
 ;   GPIO 27     = /SLTSL    (active-low slot select)
-;   GPIO 28     = /WAIT     (active-low, directly driven by PIO side-set)
+;   GPIO 28     = /WAIT     (active-low, open-drain via PIO pindir)
 ;   GPIO 29     = BUSSDIR
 ;
 ; -----------------------------------------------------------------------
@@ -38,14 +38,14 @@
 ;
 ;   Read flow:
 ;     1. PIO waits for /SLTSL=0 then /RD=0
-;     2. PIO immediately asserts /WAIT=0 (side-set) to freeze the Z80
+;     2. PIO immediately asserts /WAIT=0 by enabling its low output driver
 ;     3. PIO captures A0..A15 and pushes the 16-bit address to the RX FIFO
 ;     4. PIO stalls on pull (waiting for CPU to push data token to TX FIFO)
 ;     5. CPU receives address, looks up data in SRAM, pushes 16-bit token:
 ;          bits[7:0]  = data byte for D0..D7
 ;          bits[15:8] = pindirs mask (0xFF = drive, 0x00 = tri-state)
 ;     6. PIO loads data onto output pins and configures pindirs
-;     7. PIO releases /WAIT=1 (side-set) with data valid on bus
+;     7. PIO releases /WAIT as hi-Z with data valid on bus
 ;     8. PIO waits for /RD to go high (end of bus cycle)
 ;     9. PIO tri-states D0..D7 (writes 0x00 to pindirs)
 ;    10. Loop back
@@ -62,18 +62,17 @@
 ; ===================================================================
 ; msx_read_responder
 ; ===================================================================
-; Side-set: 1 pin = /WAIT (active-low), directly wired to MSX /WAIT.
-;   side 1 = /WAIT deasserted (Z80 runs)
-;   side 0 = /WAIT asserted   (Z80 frozen)
+; /WAIT is open-drain: the PIO output value is preloaded LOW.
+;   set pindirs, 1 = /WAIT asserted   (Z80 frozen)
+;   set pindirs, 0 = /WAIT released   (hi-Z, MSX pull-up restores high)
 ;
 ; in_base     = GPIO 0  (A0), 16 pins
 ; out_base    = GPIO 16 (D0), 8 pins
-; sideset_pin = GPIO 28 (/WAIT)
+; set_base    = GPIO 28 (/WAIT)
 ;
 ; Autopush/autopull disabled. Shift directions set from C.
 
 .program msx_read_responder
-.side_set 1 opt
 
 ; jmp_pin must be configured to /RD (GPIO 24) from C code.
 ; jmp pin jumps when the pin is HIGH (1). /RD is active-low:
@@ -86,19 +85,19 @@
 
 .wrap_target
 wait_sltsl:
-    wait 0 gpio 27     side 1     ; Wait for /SLTSL=0 (slot selected). /WAIT released.
-    jmp pin wait_sltsl  side 1     ; If /RD=1 (no read), re-check /SLTSL
-    nop                side 0     ; Assert /WAIT=0 immediately to freeze Z80
-    in pins, 16        side 0     ; Capture A0..A15 into ISR
-    push block         side 0     ; Send address to CPU via RX FIFO
-    pull block         side 0     ; Wait for CPU response in TX FIFO (data token)
-    out pins, 8        side 0     ; Drive D0..D7 with data byte
-    out pindirs, 8     side 0     ; Set pindirs (0xFF=output, 0x00=tristate)
-    nop                side 1 [1] ; Release /WAIT=1; data is now valid. 2-cycle hold.
-    wait 1 gpio 24     side 1     ; Wait for /RD=1 (bus cycle ends)
-    set x, 0           side 1     ; Prepare zero for tri-state
-    mov osr, x         side 1     ; Load zero into OSR
-    out pindirs, 8     side 1     ; Tri-state D0..D7 (pindirs=0x00)
+    wait 0 gpio 27               ; Wait for /SLTSL=0 (slot selected). /WAIT released.
+    jmp pin wait_sltsl           ; If /RD=1 (no read), re-check /SLTSL
+    set pindirs, 1               ; Assert /WAIT=0 immediately to freeze Z80
+    in pins, 16                  ; Capture A0..A15 into ISR
+    push block                   ; Send address to CPU via RX FIFO
+    pull block                   ; Wait for CPU response in TX FIFO (data token)
+    out pins, 8                  ; Drive D0..D7 with data byte
+    out pindirs, 8               ; Set pindirs (0xFF=output, 0x00=tristate)
+    set pindirs, 0        [1]    ; Release /WAIT as hi-Z; data is now valid.
+    wait 1 gpio 24               ; Wait for /RD=1 (bus cycle ends)
+    set x, 0                     ; Prepare zero for tri-state
+    mov osr, x                   ; Load zero into OSR
+    out pindirs, 8               ; Tri-state D0..D7 (pindirs=0x00)
 .wrap
 
 ; ===================================================================

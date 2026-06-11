@@ -1,5 +1,10 @@
 # Change Log
 
+## PicoVerse 2040 Multirom v2.59
+
+- Bumped the multirom.pio version to v2.59.
+- Changed the memory-read `/WAIT` driver to open-drain behaviour: the firmware now asserts `/WAIT` by pulling it low and releases the shared line as hi-Z after stretched read cycles and ROM-cache setup.
+
 ## PicoVerse 2040 Multirom v2.58
 
 - Bumped the multirom.pio version to v2.58.

@@ -34,6 +34,7 @@ static void build_audio_text(const ROMRecord *record, unsigned char audio_profil
 static unsigned char sanitize_audio_profile(const ROMRecord *record, unsigned char audio_profile);
 static unsigned char next_audio_profile(const ROMRecord *record, unsigned char audio_profile, int dir);
 static void apply_detected_mapper(ROMRecord *record);
+static unsigned char current_wavegame_rom = 0;
 
 #define MP3_COUNTER_POLL_JIFFIES 5
 #define MP3_COUNTER_FORCE_JIFFIES 50
@@ -116,6 +117,7 @@ static unsigned char send_load_options(unsigned int index, unsigned char *audio_
     }
     Poke(CTRL_CMD, CMD_LOAD_OPTIONS);
     wait_for_ctrl_cmd_clear();
+    current_wavegame_rom = Peek(CTRL_WAVEGAME_ROM) ? 1 : 0;
     if (!read_ack_value()) {
         return 0;
     }
@@ -529,6 +531,7 @@ static unsigned int read_mp3_elapsed(void) {
 static void render_mp3_screen(const ROMRecord *record) {
     char name[MAX_FILE_NAME_LENGTH + 1];
     unsigned long size_kb = record->Size / 1024u;
+    const char *type = ((record->Mapper & AUDIO_TYPE_MASK) == AUDIO_TYPE_WAV) ? "WAV" : "MP3";
 
     Locate(0, 0);
     menu_ui_print_title_line();
@@ -540,13 +543,13 @@ static void render_mp3_screen(const ROMRecord *record) {
 
     Locate(0, 3);
     if (use_80_columns) {
-        printf("    MP3: %-71.71s", name);
+        printf("    %s: %-71.71s", type, name);
     } else {
-        printf("    MP3: %-29.29s", name);
+        printf("    %s: %-29.29s", type, name);
     }
 
     Locate(0, 4);
-    printf("   Type: MP3");
+    printf("   Type: %s", type);
 
     Locate(0, 5);
     if (use_80_columns) {
@@ -770,6 +773,9 @@ static void build_mapper_text(const ROMRecord *record, int waiting_mapper, char 
 }
 
 static unsigned char audio_profile_is_supported(const ROMRecord *record, unsigned char audio_profile) {
+    if (current_wavegame_rom) {
+        return audio_profile == AUDIO_PROFILE_NONE;
+    }
     if (audio_profile == AUDIO_PROFILE_NONE) {
         return 1;
     }
@@ -792,6 +798,9 @@ static unsigned char audio_profile_is_supported(const ROMRecord *record, unsigne
 }
 
 static unsigned char default_audio_profile(const ROMRecord *record) {
+    if (current_wavegame_rom) {
+        return AUDIO_PROFILE_NONE;
+    }
     return record_supports_scc_audio(record) ? AUDIO_PROFILE_SCC : AUDIO_PROFILE_NONE;
 }
 

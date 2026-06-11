@@ -36,7 +36,7 @@ int record_is_folder(const ROMRecord *record);
 int record_is_mp3(const ROMRecord *record);
 void trim_name_to_buffer(const char *src, char *dst, int max_len);
 static void build_menu_row_text(const ROMRecord *record, const char *name_override, char *out, unsigned char width);
-static void enter_directory(const char *name);
+static void enter_directory(int index);
 static void refresh_menu_state(const char *loading_text);
 static void wait_key_with_blinking_status(const char *text);
 static void wait_command_with_blinking_status(const char *text, unsigned int wait_limit);
@@ -204,6 +204,9 @@ static void build_menu_row_text(const ROMRecord *record, const char *name_overri
     if (record_is_folder(record)) {
         type_label = "<DIR>";
         source = "SD";
+    } else if (record_is_mp3(record) && ((record->Mapper & AUDIO_TYPE_MASK) == AUDIO_TYPE_WAV)) {
+        type_label = " WAV";
+        source = "SD";
     } else if (record_is_mp3(record)) {
         type_label = " MP3";
         source = "SD";
@@ -290,18 +293,9 @@ void trim_name_to_buffer(const char *src, char *dst, int max_len) {
 }
 
 // enter_directory - Send command to Pico to enter a directory.
-static void enter_directory(const char *name) {
-    char folder[CTRL_QUERY_SIZE];
+static void enter_directory(int index) {
     const char *loading_text = menu_ui_status_text("Loading...", "Loading folder...");
     Poke(MP3_CTRL_CMD, MP3_CMD_STOP);
-    if (name) {
-        trim_name_to_buffer(name, folder, CTRL_QUERY_SIZE - 1);
-    } else {
-        folder[0] = '\0';
-    }
-    if (folder[0] == '.' && folder[1] == '.' && folder[2] == '\0') {
-        folder[0] = '\0';
-    }
     menu_ui_print_last_line_text(loading_text);
     unsigned char blink_state = 1;
     unsigned char blink_tick = 0;
@@ -312,7 +306,12 @@ static void enter_directory(const char *name) {
         delay_ms(10);
         menu_ui_blink_last_line(loading_text, &blink_state, &blink_tick, 8);
     }
-    send_query_to_pico(folder);
+    send_query_to_pico("");
+    if (index >= 0) {
+        Poke(CTRL_QUERY_BASE + 0, (unsigned char)(index & 0xFF));
+        Poke(CTRL_QUERY_BASE + 1, (unsigned char)((index >> 8) & 0xFF));
+        Poke(CTRL_QUERY_BASE + 2, CTRL_MAGIC);
+    }
     Poke(CTRL_CMD, CMD_ENTER_DIR);
     for (unsigned int wait = 0; wait < 500; wait++) {
         if (Peek(CTRL_CMD) == 0) {
@@ -898,7 +897,7 @@ void navigateMenu()
                 displayMenu();
             }
             if (key == 27) {
-                enter_directory(NULL);
+                enter_directory(-1);
                 refresh_menu_state(0);
             }
             continue;
@@ -975,7 +974,7 @@ void navigateMenu()
                 }
                 break;
             case 27: // ESC
-                enter_directory(NULL);
+                enter_directory(-1);
                 refresh_menu_state(0);
                 break;
             case 72: // H - Help (uppercase H)
@@ -1028,9 +1027,9 @@ void navigateMenu()
                     char selected_name[CTRL_QUERY_SIZE];
                     trim_name_to_buffer(records[currentIndex % FILES_PER_PAGE].Name, selected_name, CTRL_QUERY_SIZE - 1);
                     if (selected_name[0] == '.' && selected_name[1] == '.' && selected_name[2] == '\0') {
-                        enter_directory(NULL);
+                        enter_directory(-1);
                     } else {
-                        enter_directory(records[currentIndex % FILES_PER_PAGE].Name);
+                        enter_directory(currentIndex);
                     }
                     refresh_menu_state(0);
                 } else if (key == 13 || record_is_mp3(&records[currentIndex % FILES_PER_PAGE])) {

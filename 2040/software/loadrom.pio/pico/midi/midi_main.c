@@ -233,10 +233,10 @@ static void setup_gpio(void) {
     gpio_init(PIN_SLTSL);   gpio_set_dir(PIN_SLTSL, GPIO_IN);
     gpio_init(PIN_BUSSDIR); gpio_set_dir(PIN_BUSSDIR, GPIO_IN);
 
-    // /WAIT — start HIGH (released) so Z80 is not frozen during boot
+    // /WAIT — open-drain: output latch low, released as input until PIO asserts it
     gpio_init(PIN_WAIT);
-    gpio_set_dir(PIN_WAIT, GPIO_OUT);
-    gpio_put(PIN_WAIT, 1);
+    gpio_put(PIN_WAIT, 0);
+    gpio_set_dir(PIN_WAIT, GPIO_IN);
 }
 
 // -----------------------------------------------------------------------
@@ -257,17 +257,17 @@ static void io_bus_init(void) {
     sm_config_set_in_shift(&cfg_r, false, false, 16);
     sm_config_set_out_pins(&cfg_r, PIN_D0, 8);
     sm_config_set_out_shift(&cfg_r, true, false, 32);
-    sm_config_set_sideset_pins(&cfg_r, PIN_WAIT);
+    sm_config_set_set_pins(&cfg_r, PIN_WAIT, 1);
     sm_config_set_jmp_pin(&cfg_r, PIN_RD);
     sm_config_set_clkdiv(&cfg_r, 1.0f);
     pio_sm_init(IO_PIO, IO_SM_READ, offset_read, &cfg_r);
 
-    // Set /WAIT pin HIGH in the PIO output register BEFORE switching mux.
-    pio_sm_set_pins_with_mask(IO_PIO, IO_SM_READ, (1u << PIN_WAIT), (1u << PIN_WAIT));
+    // Preload /WAIT low; the PIO releases it by switching direction to input.
+    pio_sm_set_pins_with_mask(IO_PIO, IO_SM_READ, 0u, (1u << PIN_WAIT));
 
     // Hand /WAIT to PIO1
     pio_gpio_init(IO_PIO, PIN_WAIT);
-    pio_sm_set_consecutive_pindirs(IO_PIO, IO_SM_READ, PIN_WAIT, 1, true);
+    pio_sm_set_consecutive_pindirs(IO_PIO, IO_SM_READ, PIN_WAIT, 1, false);
 
     // Data bus D0-D7: hand to PIO1 for bidirectional control
     for (int i = PIN_D0; i <= PIN_D7; i++)

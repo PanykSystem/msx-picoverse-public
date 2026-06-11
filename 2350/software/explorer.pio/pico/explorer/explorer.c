@@ -64,6 +64,8 @@
 #define FOLDER_FLAG     0x40 // Flag in the mapper byte indicating the record is a folder
 #define MP3_FLAG        0x20 // Flag in the mapper byte indicating the record is an MP3 file
 #define OVERRIDE_FLAG   0x10 // Flag in the mapper byte indicating manual override
+#define AUDIO_TYPE_MASK 0x0F // Low bits identify audio subtypes when MP3_FLAG is set
+#define AUDIO_TYPE_WAV  0x01 // Audio subtype: PCM WAV file
 
 #define EXPLORER_MP3_DISABLED 0
 
@@ -142,6 +144,7 @@
 #define CTRL_AUDIO      (CTRL_BASE_ADDR + 9) // Control: audio profile selection
 #define CTRL_WIFI_SUPPORT (CTRL_BASE_ADDR + 10) // Control: Sunrise WiFi support (0=No, 1=Yes)
 #define CTRL_PSG_EMULATION (CTRL_BASE_ADDR + 11) // Control: primary PSG emulation (0=No, 1=Yes)
+#define CTRL_WAVEGAME_ROM (CTRL_BASE_ADDR + 12) // Control: selected SD ROM has WAVEGAME sidecar audio
 
 #define AUDIO_PROFILE_NONE       0u
 #define AUDIO_PROFILE_SCC        1u
@@ -263,7 +266,8 @@ typedef struct {
 static msx_pio_bus_t msx_bus;
 static bool msx_bus_programs_loaded = false;
 static msx_pio_io_bus_t msx_io_bus;
-static bool msx_io_bus_programs_loaded = false;
+static bool msx_io_read_program_loaded = false;
+static bool msx_io_write_program_loaded = false;
 
 typedef struct {
     uint16_t rom_index;
@@ -565,7 +569,7 @@ typedef struct {
 
 ROMRecord records[MAX_ROM_RECORDS]; // Array to store the ROM records
 
-#define SD_PATH_MAX        96
+#define SD_PATH_MAX        256
 #define SD_PATH_BUFFER_SIZE 19000
 #define MIN_ROM_SIZE       8192
 #define MAX_ROM_SIZE       (15u * 1024u * 1024u)
@@ -635,6 +639,13 @@ static uint16_t mp3_playing_filtered_index = 0xFFFF;
 static volatile uint8_t ctrl_audio_selection = AUDIO_PROFILE_NONE;
 static volatile uint8_t ctrl_wifi_support = 0; // 0=disabled, 1=enabled for Sunrise Nextor launches
 static volatile uint8_t ctrl_psg_emulation = 0; // 0=disabled, 1=primary PSG over I2S
+static volatile uint8_t ctrl_wavegame_rom = 0; // 0=normal ROM, 1=WAVEGAME sidecars detected
+static bool wavegame_active = false;
+static bool wavegame_psg_mirror_active = false;
+static char wavegame_dir[SD_PATH_MAX];
+static bool wavegame_defer_next = false;
+static bool wavegame_deferred_valid = false;
+static uint8_t wavegame_deferred_data = 0;
 
 static uint8_t fh_page_index = 0;
 static uint8_t fh_status = FH_STATUS_READY;
@@ -751,6 +762,7 @@ static void ym2151_init(ym2151_sfg_variant_t variant);
 static void ym2151_audio_init(void);
 static inline void __not_in_flash_func(ym2151_audio_service_buffer)(bool service_psg_io);
 static void start_ym2151_audio_output(void);
+static inline bool __not_in_flash_func(pio_try_get_io_write)(uint16_t *addr_out, uint8_t *data_out);
 
 static struct audio_buffer_pool *claim_rom_audio_handoff_pool(void)
 {
@@ -1287,6 +1299,14 @@ static bool has_mp3_extension(const char *filename) {
     return equals_ignore_case(dot + 1, "MP3");
 }
 
+static bool has_wav_extension(const char *filename) {
+    const char *dot = strrchr(filename, '.');
+    if (!dot || dot[1] == '\0') {
+        return false;
+    }
+    return equals_ignore_case(dot + 1, "WAV");
+}
+
 static bool build_pvc_options_path(uint16_t record_index, char *out, size_t out_size) {
     if (!out || out_size == 0 || record_index >= full_record_count) {
         return false;
@@ -1327,9 +1347,30 @@ static uint16_t query_filtered_index(void) {
            (uint16_t)(((uint8_t)filter_query[1]) << 8);
 }
 
+static void process_enter_dir_request(void) {
+    filter_query[CTRL_QUERY_SIZE - 1] = '\0';
+    if ((uint8_t)filter_query[2] == CTRL_MAGIC) {
+        uint16_t filtered_index = query_filtered_index();
+        if (filtered_index < total_record_count) {
+            uint16_t record_index = filtered_indices[filtered_index];
+            if (record_index < full_record_count && (records[record_index].Mapper & FOLDER_FLAG)) {
+                append_folder_to_path(records[record_index].Name);
+            }
+        }
+    } else if (filter_query[0] == '\0') {
+        go_up_one_level();
+    } else {
+        append_folder_to_path(filter_query);
+    }
+    refresh_requested = true;
+}
+
+static bool wavegame_assets_detected_for_record(uint16_t record_index);
+
 static void process_load_options_request(void) {
     ctrl_ack_value = 0;
     ctrl_mapper_value = 0;
+    ctrl_wavegame_rom = 0;
     if (!sd_mount_card()) {
         return;
     }
@@ -1339,6 +1380,7 @@ static void process_load_options_request(void) {
         return;
     }
     uint16_t record_index = filtered_indices[index];
+    ctrl_wavegame_rom = wavegame_assets_detected_for_record(record_index) ? 1u : 0u;
     char path[SD_PATH_MAX];
     if (!build_pvc_options_path(record_index, path, sizeof(path))) {
         return;
@@ -1362,6 +1404,9 @@ static void process_load_options_request(void) {
 
     ctrl_audio_selection = data[4];
     ctrl_psg_emulation = data[5] ? 1u : 0u;
+    if (ctrl_wavegame_rom) {
+        ctrl_audio_selection = AUDIO_PROFILE_NONE;
+    }
     if (br >= PVC_OPTIONS_SIZE && data[6] != 0 && !is_system_mapper(data[6]) && data[6] < MAPPER_DESCRIPTION_COUNT) {
         ROMRecord *rec = &records[record_index];
         uint8_t flags = rec->Mapper & (SOURCE_SD_FLAG | FOLDER_FLAG | MP3_FLAG);
@@ -1384,6 +1429,7 @@ static void process_save_options_request(void) {
         return;
     }
     uint16_t record_index = filtered_indices[index];
+    uint8_t audio_selection = wavegame_assets_detected_for_record(record_index) ? AUDIO_PROFILE_NONE : (uint8_t)filter_query[2];
     char path[SD_PATH_MAX];
     if (!build_pvc_options_path(record_index, path, sizeof(path))) {
         return;
@@ -1395,7 +1441,7 @@ static void process_save_options_request(void) {
     }
     uint8_t data[PVC_OPTIONS_SIZE] = {
         PVC_OPTIONS_MAGIC_0, PVC_OPTIONS_MAGIC_1, PVC_OPTIONS_MAGIC_2, PVC_OPTIONS_MAGIC_3,
-        (uint8_t)filter_query[2], (uint8_t)(filter_query[3] ? 1u : 0u), (uint8_t)filter_query[4]
+        audio_selection, (uint8_t)(filter_query[3] ? 1u : 0u), (uint8_t)filter_query[4]
     };
     UINT written = 0;
     FRESULT fr = f_write(&fil, data, sizeof(data), &written);
@@ -1415,6 +1461,7 @@ static void process_prepare_quick_run_request(void) {
     ctrl_audio_selection = AUDIO_PROFILE_NONE;
     ctrl_psg_emulation = 0;
     ctrl_wifi_support = 0;
+    ctrl_wavegame_rom = 0;
 
     if (index >= total_record_count) {
         return;
@@ -1541,6 +1588,64 @@ static uint16_t add_folder_record(uint16_t record_index, const char *name) {
     return (uint16_t)(record_index + 1);
 }
 
+static bool wavegame_asset_exists_in_dir(const char *dir, const char *name) {
+    char path[SD_PATH_MAX];
+    int written;
+    if (!dir || !name || dir[0] == '\0') {
+        return false;
+    }
+    if (strcmp(dir, "/") == 0) {
+        written = snprintf(path, sizeof(path), "/%s", name);
+    } else {
+        written = snprintf(path, sizeof(path), "%s/%s", dir, name);
+    }
+    if (written <= 0 || (size_t)written >= sizeof(path)) {
+        return false;
+    }
+    FILINFO info;
+    return f_stat(path, &info) == FR_OK && !(info.fattrib & AM_DIR) && info.fsize > 0;
+}
+
+static bool wavegame_assets_detected_for_record(uint16_t record_index) {
+    if (record_index >= full_record_count || sd_path_offsets[record_index] == 0xFFFF) {
+        return false;
+    }
+    ROMRecord const *rec = &records[record_index];
+    uint8_t flags = rec->Mapper & (SOURCE_SD_FLAG | FOLDER_FLAG | MP3_FLAG);
+    if (!(flags & SOURCE_SD_FLAG) || (flags & (FOLDER_FLAG | MP3_FLAG)) || is_system_record(rec)) {
+        return false;
+    }
+
+    char dir[SD_PATH_MAX];
+    const char *rom_path = sd_path_buffer + sd_path_offsets[record_index];
+    size_t len = strlen(rom_path);
+    if (len == 0 || len >= sizeof(dir)) {
+        return false;
+    }
+    memcpy(dir, rom_path, len + 1);
+    char *slash = strrchr(dir, '/');
+    if (!slash) {
+        return false;
+    }
+    if (slash == dir) {
+        slash[1] = '\0';
+    } else {
+        *slash = '\0';
+    }
+
+    if (wavegame_asset_exists_in_dir(dir, "multi.wav") || wavegame_asset_exists_in_dir(dir, "pause.wav")) {
+        return true;
+    }
+    for (uint8_t i = 0; i < 64; i++) {
+        char name[7];
+        snprintf(name, sizeof(name), "%02u.wav", (unsigned)i);
+        if (wavegame_asset_exists_in_dir(dir, name)) {
+            return true;
+        }
+    }
+    return false;
+}
+
 static uint16_t add_sd_rom_record(uint16_t record_index, const char *path, const char *filename, uint32_t size, uint8_t mapper) {
     if (record_index >= MAX_ROM_RECORDS) {
         return record_index;
@@ -1564,7 +1669,7 @@ static uint16_t add_sd_rom_record(uint16_t record_index, const char *path, const
     return (uint16_t)(record_index + 1);
 }
 
-static uint16_t add_sd_mp3_record(uint16_t record_index, const char *path, const char *filename, uint32_t size) {
+static uint16_t add_sd_mp3_record(uint16_t record_index, const char *path, const char *filename, uint32_t size, bool is_wav) {
     if (record_index >= MAX_ROM_RECORDS) {
         return record_index;
     }
@@ -1581,7 +1686,7 @@ static uint16_t add_sd_mp3_record(uint16_t record_index, const char *path, const
 
     memset(records[record_index].Name, 0, sizeof(records[record_index].Name));
     strncpy(records[record_index].Name, display_name, sizeof(records[record_index].Name) - 1);
-    records[record_index].Mapper = (unsigned char)(MP3_FLAG | SOURCE_SD_FLAG);
+    records[record_index].Mapper = (unsigned char)(MP3_FLAG | SOURCE_SD_FLAG | (is_wav ? AUDIO_TYPE_WAV : 0u));
     records[record_index].Size = (unsigned long)size;
     records[record_index].Offset = (unsigned long)record_index;
     return (uint16_t)(record_index + 1);
@@ -1640,28 +1745,33 @@ static void refresh_records_for_current_path(void) {
                     continue;
                 }
                 bool is_mp3 = has_mp3_extension(fno.fname);
+                bool is_wav = has_wav_extension(fno.fname);
                 bool is_rom = has_rom_extension(fno.fname);
 #if EXPLORER_MP3_DISABLED
                 // MP3 player temporarily disabled — skip MP3 entries.
-                if (is_mp3) continue;
+                if (is_mp3 || is_wav) continue;
 #endif
 
-                if (!is_mp3 && !is_rom) {
+                if (!is_mp3 && !is_wav && !is_rom) {
                     continue;
                 }
 
                 char path[SD_PATH_MAX];
+                int written;
                 if (is_root_path(sd_current_path)) {
-                    snprintf(path, sizeof(path), "/%s", fno.fname);
+                    written = snprintf(path, sizeof(path), "/%s", fno.fname);
                 } else {
-                    snprintf(path, sizeof(path), "%s/%s", sd_current_path, fno.fname);
+                    written = snprintf(path, sizeof(path), "%s/%s", sd_current_path, fno.fname);
+                }
+                if (written <= 0 || (size_t)written >= sizeof(path)) {
+                    continue;
                 }
 
-                if (is_mp3) {
+                if (is_mp3 || is_wav) {
                     if (fno.fsize == 0) {
                         continue;
                     }
-                    record_index = add_sd_mp3_record(record_index, path, fno.fname, (uint32_t)fno.fsize);
+                    record_index = add_sd_mp3_record(record_index, path, fno.fname, (uint32_t)fno.fsize, is_wav);
                     sd_record_count++;
                     continue;
                 }
@@ -1803,23 +1913,28 @@ static bool refresh_records_chunked(void) {
             }
             if (fno.fattrib & AM_DIR) continue;
             bool is_mp3 = has_mp3_extension(fno.fname);
+            bool is_wav = has_wav_extension(fno.fname);
             bool is_rom = has_rom_extension(fno.fname);
 #if EXPLORER_MP3_DISABLED
             // MP3 player temporarily disabled — skip MP3 entries.
-            if (is_mp3) continue;
+            if (is_mp3 || is_wav) continue;
 #endif
-            if (!is_mp3 && !is_rom) continue;
+            if (!is_mp3 && !is_wav && !is_rom) continue;
 
             char path[SD_PATH_MAX];
+            int written;
             if (is_root_path(sd_current_path)) {
-                snprintf(path, sizeof(path), "/%s", fno.fname);
+                written = snprintf(path, sizeof(path), "/%s", fno.fname);
             } else {
-                snprintf(path, sizeof(path), "%s/%s", sd_current_path, fno.fname);
+                written = snprintf(path, sizeof(path), "%s/%s", sd_current_path, fno.fname);
+            }
+            if (written <= 0 || (size_t)written >= sizeof(path)) {
+                continue;
             }
 
-            if (is_mp3) {
+            if (is_mp3 || is_wav) {
                 if (fno.fsize == 0) continue;
-                refresh_record_index = add_sd_mp3_record(refresh_record_index, path, fno.fname, (uint32_t)fno.fsize);
+                refresh_record_index = add_sd_mp3_record(refresh_record_index, path, fno.fname, (uint32_t)fno.fsize, is_wav);
                 sd_record_count++;
                 continue;
             }
@@ -1994,6 +2109,143 @@ static void ensure_mp3_core1_started(void) {
 #endif
 }
 
+#define WAVEGAME_PORT 0x92u
+
+static inline bool __not_in_flash_func(main_psg_handle_io_write)(uint8_t port, uint8_t data);
+
+static void wavegame_clear(void)
+{
+    wavegame_active = false;
+    wavegame_psg_mirror_active = false;
+    wavegame_dir[0] = '\0';
+    wavegame_defer_next = false;
+    wavegame_deferred_valid = false;
+    wavegame_deferred_data = 0;
+    mp3_wavegame_set_psg_callbacks(NULL, NULL);
+}
+
+static void wavegame_prepare_for_rom(uint16_t record_index, bool enabled)
+{
+    wavegame_clear();
+    if (!enabled || record_index >= MAX_ROM_RECORDS || sd_path_offsets[record_index] == 0xFFFF)
+        return;
+
+    const char *rom_path = sd_path_buffer + sd_path_offsets[record_index];
+    size_t len = strlen(rom_path);
+    if (len == 0 || len >= sizeof(wavegame_dir))
+        return;
+
+    memcpy(wavegame_dir, rom_path, len + 1);
+    char *slash = strrchr(wavegame_dir, '/');
+    if (!slash)
+        return;
+    if (slash == wavegame_dir)
+        slash[1] = '\0';
+    else
+        slash[0] = '\0';
+    wavegame_active = true;
+    printf("WAVEGAME: active dir=%s\n", wavegame_dir);
+}
+
+static bool wavegame_is_playing(void)
+{
+    if (!mp3_core1_started)
+        return false;
+    uint8_t status = mp3_get_status();
+    return (status & (MP3_STATUS_PLAYING | MP3_STATUS_PAUSED)) != 0;
+}
+
+static bool wavegame_execute_command(uint8_t data, bool allow_defer)
+{
+    if ((data & 0xC0u) == 0x40u)
+    {
+        ensure_mp3_core1_started();
+        mp3_wavegame_play_index(wavegame_dir, (uint8_t)(data & 0x3Fu), false);
+        return true;
+    }
+    if ((data & 0xC0u) == 0x80u)
+    {
+        ensure_mp3_core1_started();
+        mp3_wavegame_play_index(wavegame_dir, (uint8_t)(data & 0x3Fu), true);
+        return true;
+    }
+    if ((data & 0xF0u) == 0x00u)
+    {
+        ensure_mp3_core1_started();
+        mp3_wavegame_fade_out((uint8_t)(data & 0x0Fu));
+        return true;
+    }
+
+    switch (data)
+    {
+        case 0xC0u:
+            ensure_mp3_core1_started();
+            mp3_wavegame_toggle_pause();
+            return true;
+        case 0xD0u:
+            if (allow_defer)
+                wavegame_defer_next = true;
+            return true;
+        case 0xE0u:
+            ensure_mp3_core1_started();
+            mp3_wavegame_resume_previous();
+            return true;
+        case 0xF0u:
+            ensure_mp3_core1_started();
+            mp3_wavegame_play_pause(wavegame_dir);
+            return true;
+        default:
+            return true;
+    }
+}
+
+static inline bool __not_in_flash_func(wavegame_handle_io_write)(uint8_t port, uint8_t data)
+{
+    if (!wavegame_active || port != WAVEGAME_PORT)
+        return false;
+
+    if (wavegame_defer_next)
+    {
+        wavegame_defer_next = false;
+        wavegame_deferred_data = data;
+        wavegame_deferred_valid = true;
+        if (!wavegame_is_playing())
+        {
+            wavegame_deferred_valid = false;
+            (void)wavegame_execute_command(wavegame_deferred_data, false);
+        }
+        return true;
+    }
+
+    printf("WAVEGAME: port=92 data=%02x\n", (unsigned)data);
+    return wavegame_execute_command(data, true);
+}
+
+static inline void __not_in_flash_func(wavegame_service_io)(void)
+{
+    if (!wavegame_active)
+        return;
+
+    uint16_t io_addr;
+    uint8_t io_data;
+    while (pio_try_get_io_write(&io_addr, &io_data))
+    {
+        uint8_t port = (uint8_t)(io_addr & 0xFFu);
+        if (wavegame_handle_io_write(port, io_data))
+            continue;
+        if (wavegame_psg_mirror_active)
+            (void)main_psg_handle_io_write(port, io_data);
+    }
+
+    if (wavegame_deferred_valid && !wavegame_is_playing())
+    {
+        uint8_t data = wavegame_deferred_data;
+        wavegame_deferred_valid = false;
+        printf("WAVEGAME: deferred data=%02x\n", (unsigned)data);
+        (void)wavegame_execute_command(data, false);
+    }
+}
+
 static void shutdown_mp3_core1_before_rom_launch(void) {
 #if EXPLORER_MP3_DISABLED
     return;
@@ -2071,7 +2323,7 @@ static void core1_bg_work(void) {
                     mp3_select_file(path, (uint32_t)rec->Size);
                     mp3_playing_filtered_index = pending_index;
                 } else {
-                    printf("MP3: select ignored (not mp3 or no path)\n");
+                    printf("MP3: select ignored (not audio or no path)\n");
                 }
             } else {
                 printf("MP3: select index out of range\n");
@@ -2144,29 +2396,36 @@ static void core1_bg_work(void) {
 
 static bool load_rom_from_sd(uint16_t record_index, uint32_t size) {
     if (!sd_mount_card()) {
+        printf("SDLOAD: mount failed\n");
         return false;
     }
-    if (record_index >= MAX_ROM_RECORDS) {
+    if (record_index >= full_record_count || record_index >= MAX_ROM_RECORDS) {
+        printf("SDLOAD: bad record=%u full=%u\n", (unsigned)record_index, (unsigned)full_record_count);
         return false;
     }
     if (sd_path_offsets[record_index] == 0xFFFF) {
+        printf("SDLOAD: missing path record=%u\n", (unsigned)record_index);
         return false;
     }
 
     // SD ROMs are streamed into the 4MB PSRAM region so rom_sram remains
     // available for flash-resident mapper caching. Bring PSRAM up lazily.
     if (!psram_bring_up_once()) {
+        printf("SDLOAD: psram bring-up failed\n");
         return false;
     }
     if (size > sd_rom_region.size) {
+        printf("SDLOAD: too large size=%lu region=%lu\n", (unsigned long)size, (unsigned long)sd_rom_region.size);
         return false;
     }
 
     const char *path = sd_path_buffer + sd_path_offsets[record_index];
+    printf("SDLOAD: record=%u size=%lu path=%s\n", (unsigned)record_index, (unsigned long)size, path);
 
     FIL fil;
     FRESULT fr = f_open(&fil, path, FA_READ);
     if (fr != FR_OK) {
+        printf("SDLOAD: open failed fr=%d\n", (int)fr);
         return false;
     }
 
@@ -2183,15 +2442,21 @@ static bool load_rom_from_sd(uint16_t record_index, uint32_t size) {
         UINT br = 0;
         fr = f_read(&fil, dst + total, to_read, &br);
         if (fr != FR_OK || br == 0) {
+            printf("SDLOAD: read stopped fr=%d br=%u total=%u target=%lu\n", (int)fr, (unsigned)br, (unsigned)total, (unsigned long)size);
             break;
         }
         total += br;
     }
 
     f_close(&fil);
-    gpio_put(PIN_WAIT, 1);
+    gpio_set_dir(PIN_WAIT, GPIO_IN);
 
-    return total == size;
+    if (total != size) {
+        printf("SDLOAD: short read total=%u target=%lu\n", (unsigned)total, (unsigned long)size);
+        return false;
+    }
+    printf("SDLOAD: loaded %u bytes\n", (unsigned)total);
+    return true;
 }
 
 // Initialize GPIO pins
@@ -2477,7 +2742,7 @@ static inline void __not_in_flash_func(prepare_rom_source)(
             true);
         dma_channel_wait_for_finish_blocking(dma_chan);
         dma_channel_unclaim(dma_chan);
-        gpio_put(PIN_WAIT, 1);
+        gpio_set_dir(PIN_WAIT, GPIO_IN);
 
         rom_cached_size = bytes_to_cache;
         // If we cached everything, we can just point to SRAM
@@ -2564,7 +2829,7 @@ static void msx_pio_bus_init(void)
     sm_config_set_in_shift(&cfg_read, false, false, 16);
     sm_config_set_out_pins(&cfg_read, PIN_D0, 8);
     sm_config_set_out_shift(&cfg_read, true, false, 32);
-    sm_config_set_sideset_pins(&cfg_read, PIN_WAIT);
+    sm_config_set_set_pins(&cfg_read, PIN_WAIT, 1);
     sm_config_set_jmp_pin(&cfg_read, PIN_RD);
     sm_config_set_clkdiv(&cfg_read, 1.0f);
     pio_sm_init(msx_bus.pio, msx_bus.sm_read, msx_bus.offset_read, &cfg_read);
@@ -2577,8 +2842,9 @@ static void msx_pio_bus_init(void)
     sm_config_set_clkdiv(&cfg_write, 1.0f);
     pio_sm_init(msx_bus.pio, msx_bus.sm_write, msx_bus.offset_write, &cfg_write);
 
+    pio_sm_set_pins_with_mask(msx_bus.pio, msx_bus.sm_read, 0u, (1u << PIN_WAIT));
     pio_gpio_init(msx_bus.pio, PIN_WAIT);
-    pio_sm_set_consecutive_pindirs(msx_bus.pio, msx_bus.sm_read, PIN_WAIT, 1, true);
+    pio_sm_set_consecutive_pindirs(msx_bus.pio, msx_bus.sm_read, PIN_WAIT, 1, false);
 
     for (uint pin = PIN_D0; pin <= PIN_D7; ++pin)
     {
@@ -2588,7 +2854,6 @@ static void msx_pio_bus_init(void)
     pio_sm_set_consecutive_pindirs(msx_bus.pio, msx_bus.sm_read, PIN_D0, 8, false);
     pio_sm_set_consecutive_pindirs(msx_bus.pio, msx_bus.sm_write, PIN_D0, 8, false);
 
-    gpio_put(PIN_WAIT, 1);
     pio_sm_set_enabled(msx_bus.pio, msx_bus.sm_read, true);
     pio_sm_set_enabled(msx_bus.pio, msx_bus.sm_write, true);
 }
@@ -2600,11 +2865,15 @@ static void msx_pio_io_bus_init(void)
     msx_io_bus.sm_io_read  = 0;
     msx_io_bus.sm_io_write = 1;
 
-    if (!msx_io_bus_programs_loaded)
+    if (!msx_io_read_program_loaded)
     {
         msx_io_bus.offset_io_read = pio_add_program(msx_io_bus.pio_read, &msx_io_read_responder_program);
+        msx_io_read_program_loaded = true;
+    }
+    if (!msx_io_write_program_loaded)
+    {
         msx_io_bus.offset_io_write = pio_add_program(msx_io_bus.pio_write, &msx_io_write_captor_program);
-        msx_io_bus_programs_loaded = true;
+        msx_io_write_program_loaded = true;
     }
 
     pio_sm_set_enabled(msx_io_bus.pio_read, msx_io_bus.sm_io_read, false);
@@ -2634,6 +2903,31 @@ static void msx_pio_io_bus_init(void)
     pio_sm_set_consecutive_pindirs(msx_io_bus.pio_read, msx_io_bus.sm_io_read, PIN_D0, 8, false);
 
     pio_sm_set_enabled(msx_io_bus.pio_read, msx_io_bus.sm_io_read, true);
+    pio_sm_set_enabled(msx_io_bus.pio_write, msx_io_bus.sm_io_write, true);
+}
+
+static void msx_pio_io_write_bus_init(void)
+{
+    msx_io_bus.pio_write = pio2;
+    msx_io_bus.sm_io_write = 1;
+
+    if (!msx_io_write_program_loaded)
+    {
+        msx_io_bus.offset_io_write = pio_add_program(msx_io_bus.pio_write, &msx_io_write_captor_program);
+        msx_io_write_program_loaded = true;
+    }
+
+    pio_sm_set_enabled(msx_io_bus.pio_write, msx_io_bus.sm_io_write, false);
+    pio_sm_clear_fifos(msx_io_bus.pio_write, msx_io_bus.sm_io_write);
+    pio_sm_restart(msx_io_bus.pio_write, msx_io_bus.sm_io_write);
+
+    pio_sm_config cfg_io_write = msx_io_write_captor_program_get_default_config(msx_io_bus.offset_io_write);
+    sm_config_set_in_pins(&cfg_io_write, PIN_A0);
+    sm_config_set_in_shift(&cfg_io_write, false, false, 32);
+    sm_config_set_fifo_join(&cfg_io_write, PIO_FIFO_JOIN_RX);
+    sm_config_set_jmp_pin(&cfg_io_write, PIN_WR);
+    sm_config_set_clkdiv(&cfg_io_write, 1.0f);
+    pio_sm_init(msx_io_bus.pio_write, msx_io_bus.sm_io_write, msx_io_bus.offset_io_write, &cfg_io_write);
     pio_sm_set_enabled(msx_io_bus.pio_write, msx_io_bus.sm_io_write, true);
 }
 
@@ -2718,7 +3012,7 @@ static inline bool __not_in_flash_func(dual_psg_handle_io_write)(uint8_t port, u
     return false;
 }
 
-static void __not_in_flash_func(main_psg_init)(uint8_t quality)
+static void __not_in_flash_func(main_psg_init_with_io)(uint8_t quality, bool init_io_bus)
 {
     if (main_psg_ready)
     {
@@ -2735,8 +3029,14 @@ static void __not_in_flash_func(main_psg_init)(uint8_t quality)
     PSG_setClock(&main_psg_instance, PSG_CLOCK);
     PSG_setQuality(&main_psg_instance, quality);
     PSG_reset(&main_psg_instance);
-    msx_pio_io_bus_init();
+    if (init_io_bus)
+        msx_pio_io_bus_init();
     main_psg_ready = true;
+}
+
+static void __not_in_flash_func(main_psg_init)(uint8_t quality)
+{
+    main_psg_init_with_io(quality, true);
 }
 
 static inline bool __not_in_flash_func(main_psg_handle_io_write)(uint8_t port, uint8_t data)
@@ -2817,6 +3117,22 @@ static inline int16_t __not_in_flash_func(main_psg_calc_sample_shifted)(uint8_t 
 static inline int16_t __not_in_flash_func(main_psg_calc_sample)(void)
 {
     return main_psg_calc_sample_shifted(PSG_VOLUME_SHIFT);
+}
+
+static int16_t __not_in_flash_func(wavegame_psg_calc_sample)(void)
+{
+    if (!wavegame_psg_mirror_active)
+        return 0;
+    return main_psg_calc_sample();
+}
+
+static void __not_in_flash_func(wavegame_psg_set_sample_rate)(uint32_t sample_rate)
+{
+    if (!wavegame_psg_mirror_active || !main_psg_ready || sample_rate == 0)
+        return;
+    uint32_t save = spin_lock_blocking(main_psg_lock);
+    PSG_setRate(&main_psg_instance, sample_rate);
+    spin_unlock(main_psg_lock, save);
 }
 
 static inline bool __not_in_flash_func(main_psg_has_audible_channels_unlocked)(void)
@@ -3745,10 +4061,12 @@ static inline void __not_in_flash_func(pio_drain_writes)(void (*handler)(uint16_
 {
     uint16_t addr;
     uint8_t data;
+    wavegame_service_io();
     while (pio_try_get_write(&addr, &data))
     {
         handler(addr, data, ctx);
     }
+    wavegame_service_io();
 }
 
 static void __not_in_flash_func(mapper_fill_ff)(void)
@@ -3952,6 +4270,13 @@ static void __no_inline_not_in_flash_func(banked8_loop)(
 {
     bank8_ctx_t ctx = { .bank_regs = bank_regs };
 
+    // openMSX-style block handling for non power-of-two ROMs (RomBlocks):
+    // the image is treated as nrBlocks 8 KB blocks. A selected block that is
+    // out of range wraps through blockMask (nrBlocks - 1) instead of reading
+    // 0xFF, which lets odd-sized ASCII8 images (e.g. 264 KB / 33 blocks) run.
+    uint32_t nrBlocks  = (available_length != 0u) ? ((available_length + 0x1FFFu) >> 13) : 0u;
+    uint32_t blockMask = (nrBlocks != 0u) ? (nrBlocks - 1u) : 0u;
+
     while (true)
     {
         pio_drain_writes(write_handler, &ctx);
@@ -3965,7 +4290,10 @@ static void __no_inline_not_in_flash_func(banked8_loop)(
 
         if (in_window)
         {
-            uint32_t rel = ((uint32_t)bank_regs[(addr - 0x4000u) >> 13] * 0x2000u) + (addr & 0x1FFFu);
+            uint32_t block = bank_regs[(addr - 0x4000u) >> 13];
+            if (nrBlocks != 0u && block >= nrBlocks)
+                block &= blockMask;
+            uint32_t rel = (block << 13) | (addr & 0x1FFFu);
             if (available_length == 0u || rel < available_length)
                 data = read_rom_byte(rom_base, rel);
         }
@@ -4092,13 +4420,7 @@ static inline void __not_in_flash_func(handle_menu_write_explorer)(uint16_t addr
         }
         else if (data == CMD_ENTER_DIR)
         {
-            filter_query[CTRL_QUERY_SIZE - 1] = '\0';
-            if (filter_query[0] == '\0') {
-                go_up_one_level();
-            } else {
-                append_folder_to_path(filter_query);
-            }
-            refresh_requested = true;
+            process_enter_dir_request();
             // Keep ctrl_cmd_state as CMD_ENTER_DIR to signal busy/done?
             // Original code: ctrl_cmd_state = CMD_ENTER_DIR;
             // Then it checked if (cmd != CMD_ENTER_DIR...) ctrl_cmd_state = 0;
@@ -5946,7 +6268,7 @@ int __no_inline_not_in_flash_func(loadrom_msx_menu)(uint32_t offset)
     gpio_put(PIN_WAIT, 0); // Wait until we are ready to read the ROM
     memset(rom_sram, 0, MENU_ROM_SIZE); // Clear the SRAM buffer
     memcpy(rom_sram, flash_rom + offset, MENU_ROM_SIZE); // Load full 32KB menu ROM
-    gpio_put(PIN_WAIT, 1); // Lets go!
+    gpio_set_dir(PIN_WAIT, GPIO_IN); // Lets go!
 
     int record_count = 0; // Record count
     const uint8_t *record_ptr = flash_rom + offset + MENU_ROM_SIZE; // Pointer to the ROM records
@@ -6048,6 +6370,7 @@ int __no_inline_not_in_flash_func(loadrom_msx_menu)(uint32_t offset)
                         case CTRL_AUDIO:   data = fh_result; break;
                         case CTRL_WIFI_SUPPORT: data = 0; break;
                         case CTRL_PSG_EMULATION: data = 0; break;
+                        case CTRL_WAVEGAME_ROM: data = 0; break;
                     }
                 }
                 else switch (addr)
@@ -6064,6 +6387,7 @@ int __no_inline_not_in_flash_func(loadrom_msx_menu)(uint32_t offset)
                     case CTRL_AUDIO:   data = ctrl_audio_selection; break;
                     case CTRL_WIFI_SUPPORT: data = ctrl_wifi_support; break;
                     case CTRL_PSG_EMULATION: data = ctrl_psg_emulation; break;
+                    case CTRL_WAVEGAME_ROM: data = ctrl_wavegame_rom; break;
                 }
             }
             else if (addr >= MP3_CTRL_BASE && addr <= (MP3_CTRL_BASE + 0x0F))
@@ -6144,13 +6468,7 @@ int __no_inline_not_in_flash_func(loadrom_msx_menu)(uint32_t offset)
                     }
                     else if (cmd == CMD_ENTER_DIR)
                     {
-                        filter_query[CTRL_QUERY_SIZE - 1] = '\0';
-                        if (filter_query[0] == '\0') {
-                            go_up_one_level();
-                        } else {
-                            append_folder_to_path(filter_query);
-                        }
-                        refresh_requested = true;
+                        process_enter_dir_request();
                         ctrl_cmd_state = CMD_ENTER_DIR;
                     }
                     else if (cmd == CMD_DETECT_MAPPER)
@@ -6241,7 +6559,9 @@ int __no_inline_not_in_flash_func(loadrom_msx_menu)(uint32_t offset)
                             mp3_pending_select = true;
                         }
                     }
-                    else if (cmd == MP3_CMD_PLAY || cmd == MP3_CMD_STOP || cmd == MP3_CMD_TOGGLE_MUTE)
+                    else if (cmd == MP3_CMD_PLAY || cmd == MP3_CMD_STOP ||
+                             cmd == MP3_CMD_PAUSE || cmd == MP3_CMD_RESUME ||
+                             cmd == MP3_CMD_TOGGLE_MUTE)
                     {
                         mp3_pending_cmd = cmd;
                     }
@@ -6407,7 +6727,9 @@ void __no_inline_not_in_flash_func(loadrom_plain32)(uint32_t offset, bool cache_
 
     while (true)
     {
+        wavegame_service_io();
         uint16_t addr = (uint16_t)pio_sm_get_blocking(msx_bus.pio, msx_bus.sm_read);
+        wavegame_service_io();
 
         bool in_window = (addr >= 0x4000u) && (addr <= 0xBFFFu);
         uint8_t data = 0xFFu;
@@ -6437,7 +6759,9 @@ void __no_inline_not_in_flash_func(loadrom_linear48)(uint32_t offset, bool cache
 
     while (true)
     {
+        wavegame_service_io();
         uint16_t addr = (uint16_t)pio_sm_get_blocking(msx_bus.pio, msx_bus.sm_read);
+        wavegame_service_io();
 
         bool in_window = (addr <= 0xBFFFu);
         uint8_t data = 0xFFu;
@@ -6711,7 +7035,9 @@ void __no_inline_not_in_flash_func(loadrom_konami)(uint32_t offset, bool cache_e
 // AB is on 0x0000, 0x0001
 void __no_inline_not_in_flash_func(loadrom_ascii8)(uint32_t offset, bool cache_enable)
 {
-    uint8_t bank_registers[4] = {0, 1, 2, 3};
+    // openMSX RomAscii8kB::reset() maps all four switchable 8 KB windows
+    // (0x4000-0xBFFF) to block 0 at startup, not to a 0,1,2,3 linear layout.
+    uint8_t bank_registers[4] = {0, 0, 0, 0};
     const uint8_t *rom_base;
     uint32_t available_length;
     prepare_rom_source(offset, cache_enable, 0u, &rom_base, &available_length);
@@ -6737,6 +7063,10 @@ void __no_inline_not_in_flash_func(loadrom_ascii16)(uint32_t offset, bool cache_
 
     bank8_ctx_t ctx = { .bank_regs = bank_registers };
 
+    // openMSX-style block handling for non power-of-two 16 KB ROMs.
+    uint32_t nrBlocks  = (available_length != 0u) ? ((available_length + 0x3FFFu) >> 14) : 0u;
+    uint32_t blockMask = (nrBlocks != 0u) ? (nrBlocks - 1u) : 0u;
+
     while (true)
     {
         pio_drain_writes(handle_ascii16_write, &ctx);
@@ -6751,7 +7081,10 @@ void __no_inline_not_in_flash_func(loadrom_ascii16)(uint32_t offset, bool cache_
         if (in_window)
         {
             uint8_t bank = (addr >> 15) & 1;
-            uint32_t rel = ((uint32_t)bank_registers[bank] << 14) + (addr & 0x3FFFu);
+            uint32_t block = bank_registers[bank];
+            if (nrBlocks != 0u && block >= nrBlocks)
+                block &= blockMask;
+            uint32_t rel = (block << 14) | (addr & 0x3FFFu);
             if (available_length == 0u || rel < available_length)
                 data = read_rom_byte(rom_base, rel);
         }
@@ -7876,7 +8209,9 @@ void __no_inline_not_in_flash_func(loadrom_planar64)(uint32_t offset, bool cache
 
     while (true)
     {
+        wavegame_service_io();
         uint16_t addr = (uint16_t)pio_sm_get_blocking(msx_bus.pio, msx_bus.sm_read);
+        wavegame_service_io();
 
         bool in_window = true; // 64KB linear: drive all reads
         uint8_t data = 0xFFu;
@@ -8109,6 +8444,12 @@ void __no_inline_not_in_flash_func(loadrom_fmpac)(uint32_t offset, bool cache_en
     uint16_t neo16_regs[3] = {0, 1, 2};
     uint16_t ascii16x_regs[2] = {0, 0};
 
+    // ASCII8 (RomAscii8kB) resets all switchable 8 KB windows to block 0.
+    if (mapper == 5u)
+    {
+        bank8_regs[0] = 0; bank8_regs[1] = 0; bank8_regs[2] = 0; bank8_regs[3] = 0;
+    }
+
     const uint8_t *rom_base;
     uint32_t available_length;
     prepare_rom_source(offset, cache_enable, 0u, &rom_base, &available_length);
@@ -8194,7 +8535,16 @@ void __no_inline_not_in_flash_func(loadrom_fmpac)(uint32_t offset, bool cache_en
                         case 7:
                             mapped = (addr >= 0x4000u && addr <= 0xBFFFu);
                             if (mapped)
-                                rel = ((uint32_t)bank8_regs[(addr - 0x4000u) >> 13] << 13) | (addr & 0x1FFFu);
+                            {
+                                uint32_t block = bank8_regs[(addr - 0x4000u) >> 13];
+                                if (available_length != 0u)
+                                {
+                                    uint32_t nrBlocks = (available_length + 0x1FFFu) >> 13;
+                                    if (block >= nrBlocks)
+                                        block &= (nrBlocks - 1u);
+                                }
+                                rel = (block << 13) | (addr & 0x1FFFu);
+                            }
                             break;
                         case 4:
                             mapped = (addr <= 0xBFFFu);
@@ -8203,7 +8553,16 @@ void __no_inline_not_in_flash_func(loadrom_fmpac)(uint32_t offset, bool cache_en
                         case 6:
                             mapped = (addr >= 0x4000u && addr <= 0xBFFFu);
                             if (mapped)
-                                rel = ((uint32_t)ascii16_regs[(addr >> 15) & 1u] << 14) | (addr & 0x3FFFu);
+                            {
+                                uint32_t block = ascii16_regs[(addr >> 15) & 1u];
+                                if (available_length != 0u)
+                                {
+                                    uint32_t nrBlocks = (available_length + 0x3FFFu) >> 14;
+                                    if (block >= nrBlocks)
+                                        block &= (nrBlocks - 1u);
+                                }
+                                rel = (block << 14) | (addr & 0x3FFFu);
+                            }
                             break;
                         case 8:
                             mapped = (addr <= 0xBFFFu);
@@ -8258,10 +8617,22 @@ static inline void __not_in_flash_func(external_scc_game_init)(external_scc_game
 {
     memset(game, 0, sizeof(*game));
     game->mapper = mapper;
-    game->bank8_regs[0] = 0;
-    game->bank8_regs[1] = 1;
-    game->bank8_regs[2] = 2;
-    game->bank8_regs[3] = 3;
+    // ASCII8 (RomAscii8kB) resets all switchable 8 KB windows to block 0;
+    // the bank-switched mappers (Konami/SCC) keep the linear 0,1,2,3 layout.
+    if (mapper == 5u)
+    {
+        game->bank8_regs[0] = 0;
+        game->bank8_regs[1] = 0;
+        game->bank8_regs[2] = 0;
+        game->bank8_regs[3] = 0;
+    }
+    else
+    {
+        game->bank8_regs[0] = 0;
+        game->bank8_regs[1] = 1;
+        game->bank8_regs[2] = 2;
+        game->bank8_regs[3] = 3;
+    }
     game->ascii16_regs[0] = 0;
     game->ascii16_regs[1] = 1;
     game->neo8_regs[0] = 0;
@@ -8312,7 +8683,16 @@ static inline bool __not_in_flash_func(external_scc_game_read)(external_scc_game
         case 7:
             mapped = (addr >= 0x4000u && addr <= 0xBFFFu);
             if (mapped)
-                rel = ((uint32_t)game->bank8_regs[(addr - 0x4000u) >> 13] << 13) | (addr & 0x1FFFu);
+            {
+                uint32_t block = game->bank8_regs[(addr - 0x4000u) >> 13];
+                if (game->available_length != 0u)
+                {
+                    uint32_t nrBlocks = (game->available_length + 0x1FFFu) >> 13;
+                    if (block >= nrBlocks)
+                        block &= (nrBlocks - 1u);
+                }
+                rel = (block << 13) | (addr & 0x1FFFu);
+            }
             break;
         case 4:
             mapped = (addr <= 0xBFFFu);
@@ -8321,7 +8701,16 @@ static inline bool __not_in_flash_func(external_scc_game_read)(external_scc_game
         case 6:
             mapped = (addr >= 0x4000u && addr <= 0xBFFFu);
             if (mapped)
-                rel = ((uint32_t)game->ascii16_regs[(addr >> 15) & 1u] << 14) | (addr & 0x3FFFu);
+            {
+                uint32_t block = game->ascii16_regs[(addr >> 15) & 1u];
+                if (game->available_length != 0u)
+                {
+                    uint32_t nrBlocks = (game->available_length + 0x3FFFu) >> 14;
+                    if (block >= nrBlocks)
+                        block &= (nrBlocks - 1u);
+                }
+                rel = (block << 14) | (addr & 0x3FFFu);
+            }
             break;
         case 8:
             mapped = (addr <= 0xBFFFu);
@@ -9504,8 +9893,6 @@ void __no_inline_not_in_flash_func(loadrom_wifi_config_setup)(uint32_t offset)
     wifi_f2_state = WIFI_F2_FORCE_SETUP;
     msx_pio_bus_init();
 
-    gpio_put(PIN_WAIT, 1);
-
     while (true)
     {
         wifi_service_rx();
@@ -9620,14 +10007,28 @@ int __no_inline_not_in_flash_func(main)()
     bool cartridge_audio = scc_audio || sfg_audio || audio_mode == AUDIO_MODE_DUAL_PSG || audio_mode == AUDIO_MODE_MSX_MUSIC;
     bool psg_emulation = (ctrl_psg_emulation != 0u);
     bool system_mapper = is_system_mapper(mapper);
+    bool wavegame_detected = wavegame_assets_detected_for_record((uint16_t)rom_index);
+    wavegame_prepare_for_rom((uint16_t)rom_index,
+        is_sd_rom && wavegame_detected && !system_mapper && audio_mode == AUDIO_MODE_NONE);
+    if (wavegame_active) {
+        msx_pio_io_write_bus_init();
+    }
     if (psg_emulation && !system_mapper) {
-        main_psg_init(audio_mode == AUDIO_MODE_MSX_MUSIC ? PSG_QUALITY_FAST : PSG_QUALITY_HIGH);
+        if (wavegame_active && audio_mode == AUDIO_MODE_NONE) {
+            main_psg_init_with_io(PSG_QUALITY_HIGH, false);
+            main_psg_core1_services_io = false;
+            wavegame_psg_mirror_active = true;
+            mp3_wavegame_set_psg_callbacks(wavegame_psg_calc_sample, wavegame_psg_set_sample_rate);
+            printf("WAVEGAME: PSG mirror active\n");
+        } else {
+            main_psg_init(audio_mode == AUDIO_MODE_MSX_MUSIC ? PSG_QUALITY_FAST : PSG_QUALITY_HIGH);
+        }
     }
     if (audio_mode == AUDIO_MODE_DUAL_PSG && !system_mapper) {
         start_dual_psg_audio();
     } else if (audio_mode == AUDIO_MODE_MSX_MUSIC) {
         start_msx_music_audio();
-    } else if (psg_emulation && !cartridge_audio && !system_mapper) {
+    } else if (psg_emulation && !cartridge_audio && !system_mapper && !wavegame_active) {
         start_main_psg_audio(true);
     }
     bool wifi_support = (ctrl_wifi_support != 0u) && is_system_mapper(mapper);

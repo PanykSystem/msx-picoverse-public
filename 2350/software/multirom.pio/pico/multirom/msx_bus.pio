@@ -15,7 +15,7 @@
 ;   GPIO 25     = /WR       (active-low write strobe)
 ;   GPIO 26     = /IORQ     (active-low I/O request)
 ;   GPIO 27     = /SLTSL    (active-low slot select)
-;   GPIO 28     = /WAIT     (active-low, directly driven by PIO side-set)
+;   GPIO 28     = /WAIT     (active-low, open-drain via PIO pindir)
 ;   GPIO 37     = BUSSDIR
 ;   GPIO 47     = PSRAM select
 ;
@@ -31,7 +31,7 @@
 ;   3. Capture A0..A15 and push to RX FIFO
 ;   4. Wait for token from CPU in TX FIFO
 ;   5. Output data and pin directions
-;   6. Release /WAIT=1, then wait for /RD high
+;   6. Release /WAIT as hi-Z, then wait for /RD high
 ;   7. Tri-state data bus and loop
 ;
 ; Write flow:
@@ -42,23 +42,22 @@
 ;
 
 .program msx_read_responder
-.side_set 1 opt
 
 .wrap_target
 wait_sltsl:
-    wait 0 gpio 27     side 1     ; Wait for /SLTSL=0
-    jmp pin wait_sltsl side 1     ; If /RD=1, re-check /SLTSL
-    nop                side 0     ; Assert /WAIT=0 immediately
-    in pins, 16        side 0     ; Capture A0..A15 into ISR
-    push block         side 0     ; Send address to CPU via RX FIFO
-    pull block         side 0     ; Wait for CPU response in TX FIFO
-    out pins, 8        side 0     ; Drive D0..D7 with data byte
-    out pindirs, 8     side 0     ; Set pindirs (0xFF=out, 0x00=in)
-    nop                side 1 [1] ; Release /WAIT=1
-    wait 1 gpio 24     side 1     ; Wait for /RD=1
-    set x, 0           side 1
-    mov osr, x         side 1
-    out pindirs, 8     side 1     ; Tri-state D0..D7
+    wait 0 gpio 27                ; Wait for /SLTSL=0
+    jmp pin wait_sltsl            ; If /RD=1, re-check /SLTSL
+    set pindirs, 1                ; Assert /WAIT=0 immediately
+    in pins, 16                   ; Capture A0..A15 into ISR
+    push block                    ; Send address to CPU via RX FIFO
+    pull block                    ; Wait for CPU response in TX FIFO
+    out pins, 8                   ; Drive D0..D7 with data byte
+    out pindirs, 8                ; Set pindirs (0xFF=out, 0x00=in)
+    set pindirs, 0         [1]    ; Release /WAIT as hi-Z
+    wait 1 gpio 24                ; Wait for /RD=1
+    set x, 0
+    mov osr, x
+    out pindirs, 8                ; Tri-state D0..D7
 .wrap
 
 .program msx_write_captor

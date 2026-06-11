@@ -1,5 +1,17 @@
 # Change Log
 
+## PicoVerse 2350 Explorer v2.34
+
+- Bumped Explorer to v2.34.
+- Fixed long microSD folder names by sending the selected record index to the Pico instead of truncating through the query buffer.
+- Changed the memory-read and ROM-load `/WAIT` release paths to open-drain behaviour.
+- Added microSD WAV discovery and playback through the existing MP3 detail screen controls.
+- Added WAVEGAME runtime support for microSD game ROMs via MSX I/O port `0x92` (stop/pause/start/loop, fade-out/in, play-once/loop, `pause.wav`, `multi.wav`, deferred commands, per-song cfg offsets), with looped WAV playback in the shared MP3/WAV core.
+- Fixed non-standard ASCII8 WaveGame ROMs (e.g. the 33-block Outrun ROM) that showed the intro but black-screened into the game, by resetting all ASCII8 banks to block 0 (matching openMSX) and wrapping out-of-range banks for non power-of-two images. 
+- The non-standard ASCII8 patch also fixed the Kikikaikai - Mystery - TAITO hanging when using SFG-01/SFG-05 reported issue (#19) by ensuring the music data is correctly banked in the expected location.
+- Added combined WAVEGAME + PSG Mirror support and WAVEGAME sidecar auto-detection that forces the ROM audio profile to None while keeping PSG Mirror selectable.
+- Updated WAVEGAME and public README documentation.
+
 ## PicoVerse 2350 Explorer v2.33
 
 - Bumped Explorer to v2.33.
