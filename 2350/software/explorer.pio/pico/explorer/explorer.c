@@ -10697,6 +10697,11 @@ int __no_inline_not_in_flash_func(main)()
 
     uint8_t mapper = mapper_code_from_record_byte(selected->Mapper);
     audio_mode_t audio_mode = resolve_audio_mode(mapper, ctrl_audio_selection);
+    // PSG Mirror is unstable on Sunrise Nextor + 1MB mapper: heavy disk I/O can
+    // drop mapper segment-register writes, so force it off for those variants.
+    if (mapper == MAPPER_SUNRISE_MAPPER_USB || mapper == MAPPER_SUNRISE_MAPPER_SD) {
+        ctrl_psg_emulation = 0;
+    }
     debug_trace("DBG launch rom=%d mapper=%u audio=%u mp3_started=%u", rom_index, mapper, (unsigned)audio_mode, mp3_core1_started ? 1u : 0u);
     if (audio_mode == AUDIO_MODE_MSX_MUSIC) {
         force_mp3_core1_handoff_before_rom_launch();

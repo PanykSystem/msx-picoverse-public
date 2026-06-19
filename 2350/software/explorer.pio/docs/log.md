@@ -6,6 +6,7 @@
 - Fixed Nextor + 1MB mapper instability and random errors that appeared only when PSG Mirror was enabled. 
 - Extended the same lock-free hand-off to every Sunrise mapper audio profile so no audio chip write can stall core0 and drop mapper segment-register writes. 
 - Disabled the MSX-MUSIC (YM2413/FM-PAC) audio profile for Sunrise Nextor ROMs that add the 1MB mapper (the `+ 1MB Mapper` USB/SD options), keeping it available only for the non-mapper Sunrise Nextor options and regular game ROMs. MSX-MUSIC with the mapper is pushing the limit of the core coordination and need more research to make it stable. The other Sunrise mapper audio profiles (Dual PSG, YM2151/SFG01, YM2151/SFG05, SCC, SCC+) remain available for the Sunrise + 1MB mapper options. This option will be re-enabled in a future Explorer release once the core coordination is improved to avoid dropped mapper writes and random errors.
+- Disabled the PSG Mirror option for Sunrise Nextor ROMs that add the 1MB mapper.
 
 ## PicoVerse 2350 Explorer v2.35
 

@@ -71,13 +71,17 @@ static unsigned char record_is_wifi_capable_system_rom(const ROMRecord *record) 
 }
 
 static unsigned char record_is_sunrise_system_rom(const ROMRecord *record) {
-    unsigned char mapper_code = record_mapper_code(record->Mapper);
-    return mapper_code == 10 || mapper_code == 11 || mapper_code == 15 || mapper_code == 16;
+    return record_is_wifi_capable_system_rom(record);
 }
 
 static unsigned char record_is_sunrise_sd_system_rom(const ROMRecord *record) {
     unsigned char mapper_code = record_mapper_code(record->Mapper);
     return mapper_code == 15 || mapper_code == 16;
+}
+
+static unsigned char record_is_sunrise_mapper_system_rom(const ROMRecord *record) {
+    unsigned char mapper_code = record_mapper_code(record->Mapper);
+    return mapper_code == 11 || mapper_code == 16;
 }
 
 static unsigned char record_supports_scc_audio(const ROMRecord *record) {
@@ -236,6 +240,7 @@ void show_rom_screen(unsigned int index) {
     unsigned char allow_mapper_override = !record_is_system_rom(record);
     unsigned char allow_wifi_support = record_is_wifi_capable_system_rom(record);
     unsigned char allow_sd_partition = record_is_sunrise_sd_system_rom(record);
+    unsigned char allow_psg = !record_is_sunrise_mapper_system_rom(record);
     unsigned char wifi_enabled = 0;
     int volume_selection = 2;
     int psg_selection = 3;
@@ -276,6 +281,9 @@ void show_rom_screen(unsigned int index) {
         }
     }
     audio_profile = sanitize_audio_profile(record, audio_profile);
+    if (!allow_psg) {
+        psg_enabled = 0; // PSG Mirror is disabled on Nextor + 1MB mapper (unstable)
+    }
 
     rom_sd_partition = sd_partition;
     render_rom_options_block(record, waiting_mapper, audio_profile, psg_enabled, wifi_enabled, allow_mapper_override, allow_wifi_support, selection);
@@ -364,7 +372,7 @@ void show_rom_screen(unsigned int index) {
                 }
                 render_rom_options_block(record, waiting_mapper, audio_profile, psg_enabled, wifi_enabled, allow_mapper_override, allow_wifi_support, selection);
             }
-            if ((key == 28 || key == 29) && selection == psg_selection) {
+            if ((key == 28 || key == 29) && selection == psg_selection && allow_psg) {
                 psg_enabled = psg_enabled ? 0 : 1;
                 render_rom_options_block(record, waiting_mapper, audio_profile, psg_enabled, wifi_enabled, allow_mapper_override, allow_wifi_support, selection);
             }
@@ -892,9 +900,7 @@ static unsigned char audio_profile_is_supported(const ROMRecord *record, unsigne
         return record_supports_dual_psg(record);
     }
     if (audio_profile == AUDIO_PROFILE_MSX_MUSIC) {
-        /* YM2413/FM-PAC excludes the Sunrise 1MB-mapper options (codes 11/16). */
-        unsigned char mc = record_mapper_code(record->Mapper);
-        return record_supports_msx_music(record) && mc != 11 && mc != 16;
+        return record_supports_msx_music(record) && !record_is_sunrise_mapper_system_rom(record);
     }
     return 0;
 }
