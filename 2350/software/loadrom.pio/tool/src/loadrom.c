@@ -10,7 +10,7 @@
 // 
 // The configuration record has the following structure:
 //  game - Game name                            - 20 bytes (padded by 0x00)
-//  mapp - Mapper code                          - 01 byte  (1 - Plain16, 2 - Plain32, 3 - KonamiSCC, 4 - Planar48, 5 - ASCII8, 6 - ASCII16, 7 - Konami, 8 - NEO8, 9 - NEO16, 10 - Sunrise, 11 - Sunrise+Mapper, 12 - ASCII16-X, 13 - Planar64, 14 - Manbow2, 15 - Sunrise SD, 16 - Sunrise SD+Mapper, 17 - Carnivore2 SD, 18 - Carnivore2 USB)
+//  mapp - Mapper code                          - 01 byte  (1 - Plain16, 2 - Plain32, 3 - KonamiSCC, 4 - Planar48, 5 - ASCII8, 6 - ASCII16, 7 - Konami, 8 - NEO8, 9 - NEO16, 10 - Sunrise, 11 - Sunrise+Mapper, 12 - ASCII16-X, 13 - Planar64, 14 - Manbow2, 15 - Sunrise SD, 16 - Sunrise SD+Mapper, 17 - Carnivore2 SD, 18 - Carnivore2 USB, 19 - MegaRAM SD, 20 - MegaRAM USB)
 //  size - Size of the ROM in bytes             - 04 bytes 
 //  offset - Offset of the game in the flash    - 04 bytes 
 //
@@ -59,7 +59,7 @@ void create_uf2_file(const char *rom_filename, const uint8_t *embedded_rom, uint
 static const char *MAPPER_DESCRIPTIONS[] = {
     "PLA-16", "PLA-32", "KonSCC", "PLN-48", "ASC-08",
     "ASC-16", "Konami", "NEO-8", "NEO-16", "SYSTEM", "SYSTEM", "ASC-16X", "PLN-64", "MANBW2",
-    "SYSTEM", "SYSTEM", "SYSTEM", "SYSTEM"
+    "SYSTEM", "SYSTEM", "SYSTEM", "SYSTEM", "SYSTEM", "SYSTEM"
 };
 
 static const char *rom_types[] = {
@@ -81,7 +81,9 @@ static const char *rom_types[] = {
     "Sunrise SD",
     "Sunrise SD+Mapper",
     "Carnivore2 SD",
-    "Carnivore2 USB"
+    "Carnivore2 USB",
+    "MegaRAM SD",
+    "MegaRAM USB"
 };
 
 #define ROM_TYPE_SUNRISE 10
@@ -93,6 +95,8 @@ static const char *rom_types[] = {
 #define ROM_TYPE_SUNRISE_MAPPER_SD 16
 #define ROM_TYPE_C2_SD 17
 #define ROM_TYPE_C2_USB 18
+#define ROM_TYPE_MEGARAM_SD 19
+#define ROM_TYPE_MEGARAM_USB 20
 
 #define ROM_TYPE_DUAL_PSG_FLAG 0x10
 #define ROM_TYPE_MSX_MUSIC_FLAG 0x20
@@ -401,14 +405,16 @@ static void print_usage(const char *prog_name) {
     size_t i;
     bool first = true;
 
-    printf("Usage: %s [-h] [-s1] [-m1] [-s2] [-m2] [-c1] [-c2] [-4] [-w] [-d] [-f] [-scc] [-sccplus] [-o <filename>] [romfile]\n", prog_name);
+    printf("Usage: %s [-h] [-s1] [-m1] [-r1] [-s2] [-m2] [-r2] [-c1] [-c2] [-4] [-w] [-d] [-f] [-scc] [-sccplus] [-o <filename>] [romfile]\n", prog_name);
     printf("\n");
     printf("Options:\n");
     printf("  -h, --help         Show this help message\n");
     printf("  -s1, --sunrise-sd  Build UF2 with Sunrise IDE Nextor ROM (microSD card)\n");
     printf("  -m1, --mapper-sd   Build UF2 with Sunrise IDE Nextor ROM + 1MB PSRAM mapper (microSD card)\n");
+    printf("  -r1, --megaram-sd  Build UF2 with Sunrise IDE Nextor ROM + 1MB PSRAM mapper + 1MB MegaRAM (microSD card)\n");
     printf("  -s2, --sunrise-usb Build UF2 with Sunrise IDE Nextor ROM (USB pendrive)\n");
     printf("  -m2, --mapper-usb  Build UF2 with Sunrise IDE Nextor ROM + 1MB PSRAM mapper (USB pendrive)\n");
+    printf("  -r2, --megaram-usb Build UF2 with Sunrise IDE Nextor ROM + 1MB PSRAM mapper + 1MB MegaRAM (USB pendrive)\n");
     printf("  -c1, --carnivore2-sd  Build UF2 with Sunrise IDE Nextor ROM + 1MB PSRAM mapper + Carnivore2 RAM emulation (microSD card)\n");
     printf("  -c2, --carnivore2-usb Build UF2 with Sunrise IDE Nextor ROM + 1MB PSRAM mapper + Carnivore2 RAM emulation (USB pendrive)\n");
     printf("  -4, --opl4         Build UF2 with the standalone OPL4 / YMF278B / MoonSound cartridge firmware (2MB YRW801-M ROM + 2MB PCM sample RAM)\n");
@@ -426,7 +432,7 @@ static void print_usage(const char *prog_name) {
     for (i = 0; i < MAPPER_DESCRIPTION_COUNT; ++i) {
         uint8_t mapper_id = (uint8_t)(i + 1u);
         if (mapper_id == 10u || mapper_id == 11u || mapper_id == 15u || mapper_id == 16u
-            || mapper_id == 17u || mapper_id == 18u) {
+            || mapper_id == 17u || mapper_id == 18u || mapper_id == 19u || mapper_id == 20u) {
             continue;
         }
 
@@ -593,6 +599,8 @@ int main(int argc, char *argv[])
     bool use_mapper_usb = false;
     bool use_c2_sd = false;
     bool use_c2_usb = false;
+    bool use_megaram_sd = false;
+    bool use_megaram_usb = false;
     bool use_opl4 = false;
     bool opl4_limit = false;
     bool opl4_lowclock = false;
@@ -610,10 +618,14 @@ int main(int argc, char *argv[])
             use_sunrise_sd = true;
         } else if ((strcmp(argv[i], "-m1") == 0) || (strcmp(argv[i], "--mapper-sd") == 0)) {
             use_mapper_sd = true;
+        } else if ((strcmp(argv[i], "-r1") == 0) || (strcmp(argv[i], "--megaram-sd") == 0)) {
+            use_megaram_sd = true;
         } else if ((strcmp(argv[i], "-s2") == 0) || (strcmp(argv[i], "--sunrise-usb") == 0)) {
             use_sunrise_usb = true;
         } else if ((strcmp(argv[i], "-m2") == 0) || (strcmp(argv[i], "--mapper-usb") == 0)) {
             use_mapper_usb = true;
+        } else if ((strcmp(argv[i], "-r2") == 0) || (strcmp(argv[i], "--megaram-usb") == 0)) {
+            use_megaram_usb = true;
         } else if ((strcmp(argv[i], "-c1") == 0) || (strcmp(argv[i], "--carnivore2-sd") == 0)) {
             use_c2_sd = true;
         } else if ((strcmp(argv[i], "-c2") == 0) || (strcmp(argv[i], "--carnivore2-usb") == 0)) {
@@ -654,15 +666,16 @@ int main(int argc, char *argv[])
     {
         int nextor_count = (use_sunrise_sd ? 1 : 0) + (use_mapper_sd ? 1 : 0)
                          + (use_sunrise_usb ? 1 : 0) + (use_mapper_usb ? 1 : 0)
-                         + (use_c2_sd ? 1 : 0) + (use_c2_usb ? 1 : 0);
+                         + (use_c2_sd ? 1 : 0) + (use_c2_usb ? 1 : 0)
+                         + (use_megaram_sd ? 1 : 0) + (use_megaram_usb ? 1 : 0);
         if (nextor_count > 1) {
-            printf("Options -s1, -m1, -s2, -m2, -c1 and -c2 are mutually exclusive.\n");
+            printf("Options -s1, -m1, -r1, -s2, -m2, -r2, -c1 and -c2 are mutually exclusive.\n");
             return 1;
         }
     }
 
     bool use_nextor = use_sunrise_sd || use_mapper_sd || use_sunrise_usb || use_mapper_usb
-                   || use_c2_sd || use_c2_usb;
+                   || use_c2_sd || use_c2_usb || use_megaram_sd || use_megaram_usb;
 
     if (opl4_limit && !use_opl4) {
         printf("Option --opl4-limit requires -4/--opl4.\n");
@@ -824,6 +837,12 @@ int main(int argc, char *argv[])
         } else if (use_c2_usb) {
             rom_type = ROM_TYPE_C2_USB;
             sunrise_name = "Nextor Sunrise+Mapper+C2 (USB)";
+        } else if (use_megaram_sd) {
+            rom_type = ROM_TYPE_MEGARAM_SD;
+            sunrise_name = "Nextor Sunrise+Mapper+MegaRAM (SD)";
+        } else if (use_megaram_usb) {
+            rom_type = ROM_TYPE_MEGARAM_USB;
+            sunrise_name = "Nextor Sunrise+Mapper+MegaRAM (USB)";
         } else {
             rom_type = ROM_TYPE_SUNRISE;
             sunrise_name = "Nextor Sunrise IDE (USB)";

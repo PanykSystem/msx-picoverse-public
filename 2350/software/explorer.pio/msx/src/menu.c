@@ -749,7 +749,7 @@ char* mapper_description(int number) {
     // Array of strings for the descriptions
     const char *descriptions[] = {"PLA-16", "PLA-32", "KonSCC", "PLN-48", "ASC-08", "ASC-16", "Konami", "NEO-8", "NEO-16", "SYSTEM", "SYSTEM", "ASC16X", "PLN-64", "MANBW2"};
     number = record_mapper_code((unsigned char)number);
-    if (number >= 15 && number <= 18) {
+    if (number >= 15 && number <= 20) {
         return "SYSTEM";
     }
     if (number <= 0 || number > 14) {

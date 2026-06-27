@@ -62,7 +62,7 @@ static void write_index_query(unsigned int index) {
 
 static unsigned char record_is_system_rom(const ROMRecord *record) {
     unsigned char mapper_code = record_mapper_code(record->Mapper);
-    return mapper_code == 9 || (mapper_code >= 10 && mapper_code <= 11) || (mapper_code >= 15 && mapper_code <= 18);
+    return mapper_code == 9 || (mapper_code >= 10 && mapper_code <= 11) || (mapper_code >= 15 && mapper_code <= 20);
 }
 
 static unsigned char record_is_wifi_capable_system_rom(const ROMRecord *record) {
@@ -77,12 +77,12 @@ static unsigned char record_is_sunrise_system_rom(const ROMRecord *record) {
 
 static unsigned char record_is_sunrise_sd_system_rom(const ROMRecord *record) {
     unsigned char mapper_code = record_mapper_code(record->Mapper);
-    return mapper_code >= 15 && mapper_code <= 17;
+    return mapper_code >= 15 && mapper_code <= 19 && mapper_code != 18;
 }
 
 static unsigned char record_is_sunrise_mapper_system_rom(const ROMRecord *record) {
     unsigned char mapper_code = record_mapper_code(record->Mapper);
-    return mapper_code == 11 || (mapper_code >= 16 && mapper_code <= 18);
+    return mapper_code == 11 || (mapper_code >= 16 && mapper_code <= 20);
 }
 
 static unsigned char record_supports_scc_audio(const ROMRecord *record) {

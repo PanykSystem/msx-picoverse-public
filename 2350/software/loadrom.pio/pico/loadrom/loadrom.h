@@ -20,6 +20,9 @@
 #define MAPPER_SIZE     1048576    // 1 MB memory mapper RAM in external PSRAM
 #define MAPPER_PAGES    64         // 1 MB / 16 KB = 64 pages
 #define MAPPER_PAGE_SIZE 16384     // 16 KB per mapper page
+#define MEGARAM_SIZE    1048576    // 1 MB MegaRAM in external PSRAM
+#define MEGARAM_BANKS   128        // 1 MB / 8 KB = 128 banks
+#define MEGARAM_BANK_SIZE 8192     // 8 KB per MegaRAM bank
 #define PSRAM_BASE_ADDR 0x11000000u // Cached CS1 QMI window for external PSRAM (write-through)
 #define PSRAM_TOTAL_SIZE 0x800000u  // 8 MB total external PSRAM
 

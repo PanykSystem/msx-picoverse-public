@@ -57,6 +57,9 @@
 #define MAPPER_SIZE      1048576u    // 1 MB memory mapper RAM in external PSRAM
 #define MAPPER_PAGES     64u         // 1 MB / 16 KB = 64 pages
 #define MAPPER_PAGE_SIZE 16384u      // 16 KB per mapper page
+#define MEGARAM_SIZE     1048576u    // 1 MB MegaRAM in external PSRAM
+#define MEGARAM_BANKS    128u        // 1 MB / 8 KB = 128 banks
+#define MEGARAM_BANK_SIZE 8192u      // 8 KB per MegaRAM bank
 
 typedef struct {
     uint32_t offset;    // Offset within PSRAM
@@ -98,3 +101,5 @@ void __no_inline_not_in_flash_func(loadrom_manbow2_scc)(uint32_t offset, bool ca
 void __no_inline_not_in_flash_func(loadrom_sunrise_sd)(uint32_t offset, bool cache_enable);
 void __no_inline_not_in_flash_func(loadrom_sunrise_mapper_sd)(uint32_t offset, bool cache_enable);
 void __no_inline_not_in_flash_func(loadrom_c2_sd)(uint32_t offset, bool cache_enable);
+void __no_inline_not_in_flash_func(loadrom_sunrise_megaram_sd)(uint32_t offset, bool cache_enable);
+void __no_inline_not_in_flash_func(loadrom_sunrise_megaram_usb)(uint32_t offset, bool cache_enable);

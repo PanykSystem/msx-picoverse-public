@@ -7,7 +7,7 @@ The Explorer tool creates a UF2 image that flashes the PicoVerse 2350 cartridge 
 - The ROM payloads that will live in Pico flash.
 - The integrated File Hunter browser and WiFi configuration support used by the Explorer menu.
 
-Use the Explorer tool when you want a menu that loads ROMs from flash, microSD, and the online File Hunter catalog on the PicoVerse 2350, or if you want to explore advanced features like microSD MP3 playback, SCC/SCC+ audio, Dual PSG audio, MSX-MUSIC, and optional primary PSG mirroring through the cartridge DAC on your MSX computer.
+Use the Explorer tool when you want a menu that loads ROMs from flash, microSD, embedded Sunrise Nextor SYSTEM entries, and the online File Hunter catalog on the PicoVerse 2350, or if you want to explore advanced features like microSD MP3 playback, SCC/SCC+ audio, Dual PSG audio, MSX-MUSIC, and optional primary PSG mirroring through the cartridge DAC on your MSX computer.
 
 ## Requirements
 
@@ -56,7 +56,17 @@ explorer.exe [options]
 
 - `-h`, `--help` : Show usage help and exit.
 - `-o <filename>`, `--output <filename>` : Set UF2 output filename (default is `explorer.uf2`).
-- `-n`, `--nextor` : Include embedded Nextor ROM (experimental; MSX2-only). In the 2350 build, this is labeled “Nextor SD (IO)”.
+- `-a`, `--allnextor` : Include every embedded Sunrise Nextor SYSTEM entry listed below while still scanning and appending `.ROM` files from the current folder.
+- `-s1`, `--sunrise-sd` : Include Sunrise IDE Nextor using the on-board microSD card slot.
+- `-m1`, `--mapper-sd` : Include Sunrise IDE Nextor on microSD plus the 1MB PSRAM-backed MSX memory mapper.
+- `-c1`, `--carnivore2-sd` : Include Sunrise IDE Nextor on microSD plus the 1MB mapper and Carnivore2-compatible RAM-mode target for `SROM.COM /D15`.
+- `-r1`, `--megaram-sd` : Include Sunrise IDE Nextor on microSD plus the 1MB mapper and a separate 1MB MegaRAM subslot.
+- `-s2`, `--sunrise-usb` : Include Sunrise IDE Nextor using USB mass storage on the cartridge USB-C port.
+- `-m2`, `--mapper-usb` : Include Sunrise IDE Nextor on USB plus the 1MB PSRAM-backed MSX memory mapper.
+- `-c2`, `--carnivore2-usb` : Include Sunrise IDE Nextor on USB plus the 1MB mapper and Carnivore2-compatible RAM-mode target for `SROM.COM /D15`.
+- `-r2`, `--megaram-usb` : Include Sunrise IDE Nextor on USB plus the 1MB mapper and a separate 1MB MegaRAM subslot.
+
+The Sunrise Nextor options can be combined. Each selected option creates a separate SYSTEM entry in the Explorer flash list, followed by any `.ROM` files found in the current folder. Use `-a` / `--allnextor` when you want all eight Nextor entries in one UF2.
 
 ### Example
 
@@ -65,6 +75,18 @@ explorer.exe
 ```
 
 This scans the current directory and generates `explorer.uf2`.
+
+```
+explorer.exe -a
+```
+
+This includes every embedded Sunrise Nextor SYSTEM entry and also appends supported `.ROM` files from the current folder.
+
+```
+explorer.exe -s1 -r1 -r2 -o explorer_nextor.uf2
+```
+
+This includes the selected Nextor entries and the supported folder ROMs in one Explorer UF2.
 
 ## ROM mapper detection and tags
 
@@ -226,7 +248,7 @@ When the save succeeds, the detail screen shows "Saved to microSD. Press key." P
 ## Known limitations
 
 - Flash ROMs packaged by the tool must be in the root of the source folder (no subfolders in the flashing process, though SD folders are fully supported in the menu).
-- The `-n` Nextor option is experimental and may not work on all MSX2 models.
+- Embedded Sunrise Nextor entries require the matching storage device at runtime: FAT16 microSD partitions up to 4 GB for `-s1`/`-m1`/`-c1`/`-r1`, or USB mass storage for `-s2`/`-m2`/`-c2`/`-r2`.
 - ROMs with unknown or unsupported mappers are skipped unless you force a mapper tag.
 - Very deep folder nesting (more than 10+ levels) is supported but may have perception of slowness due to repeated folder scans.
 - File Hunter browsing is unavailable without an ESP-01 / ESP8266 module, compatible ESP firmware, and a configured WiFi network.
@@ -261,7 +283,7 @@ Selecting a ROM entry opens a ROM details screen before running:
 - **Mapper**: Shows the detected mapper (for SD ROMs) and allows manual override using Left/Right.
 - **Audio**: Choose an audio profile with Left/Right (None, SCC, SCC+, external SCC/SCC+, Dual PSG, MSX-MUSIC, SFG01/SFG05). The menu only cycles through profiles supported by the selected ROM mapper.
 - **PSG**: Choose whether to mirror the MSX primary PSG writes through the cartridge DAC. The default is Yes unless saved `.PVC` options override it.
-- **Wifi**: For Sunrise Nextor entries only, choose whether to expose the ESP8266P WiFi BIOS before running. The default is No.
+- **Wifi**: For standalone Sunrise Nextor and Sunrise + 1MB mapper entries only, choose whether to expose the ESP8266P WiFi BIOS before running. Carnivore2 and MegaRAM Nextor entries do not expose WiFi. The default is No.
 - **SD Part**: For Sunrise Nextor SD entries only, choose the FAT16 partition up to 4 GB that Nextor will boot from. The selected partition is saved with the ROM options.
 - **Action: Run**: Press Enter to launch the ROM.
 - **Esc**: Return to the menu without running.
@@ -278,7 +300,7 @@ If a ROM mapper is unknown, the screen will briefly show "Detecting..." while th
 - **YM2151 (SFG05)**: Exposes a Yamaha SFG-05-like YM2151 cartridge surface and the SFG-05 BIOS image in a secondary subslot while keeping the selected game mapper in the primary game subslot. Use this for ROMs that scan another slot for SFG/YM2151 hardware.
 - **YM2151 (SFG01)**: Exposes the SFG-01 BIOS image with the same YM2151 register surface for software that distinguishes SFG01/SFG05 setups.
 - **Dual PSG**: Enables a secondary AY-3-8910 compatible PSG on I/O ports `0x10` (register select) and `0x11` (data write), matching the common Carnivore2 / MegaFlashROM / FlashJacks style second-PSG convention. Use this for ROMs or patches that explicitly support dual PSG music.
-- **MSX-MUSIC**: Enables YM2413/MSX-MUSIC audio using an FM-PAC-compatible BIOS from the Explorer UF2 flash payload. Use this for regular ROMs that can use MSX-MUSIC ports `0x7C` and `0x7D`; Sunrise Nextor SYSTEM entries also expose the FM-PAC BIOS in a free expanded subslot.
+- **MSX-MUSIC**: Enables YM2413/MSX-MUSIC audio using an FM-PAC-compatible BIOS from the Explorer UF2 flash payload. Use this for regular ROMs that can use MSX-MUSIC ports `0x7C` and `0x7D`; supported Sunrise Nextor SYSTEM entries also expose the FM-PAC BIOS in a free expanded subslot.
 
 Explorer treats audio profiles as mutually exclusive: a ROM can run with no extra audio, SCC, SCC+, external SCC/SCC+, Dual PSG, MSX-MUSIC, or YM2151/SFG, but not multiple cartridge audio engines at the same time.
 
@@ -286,11 +308,11 @@ The **PSG** field is independent from the Audio profile. When set to **Yes**, Ex
 
 The SCC and SCC+ audio profiles work with ROMs using the Konami SCC mapper (`KonSCC`) or the Manbow2 mapper (`MANBW2`). When a ROM is detected as `KonSCC` or `MANBW2`, the ROM screen pre-selects **SCC** in the Audio field; you can change it to None, SCC+, or one of the external SCC profiles before pressing Run. Dual PSG and MSX-MUSIC are not offered for these mappers because the cartridge audio slot is reserved for SCC/SCC+.
 
-The external SCC and SCC+ profiles are available for non-SYSTEM ROM entries and Sunrise Nextor SYSTEM entries. Non-SYSTEM ROMs launch in an expanded cartridge layout with the selected game mapper in subslot 0 and the virtual SCC/SCC+ cartridge surface in subslot 1. Sunrise Nextor SYSTEM launches keep Nextor storage in its normal subslot, keep mapper RAM available only for the explicit `+ 1MB Mapper` entries, and place the virtual SCC/SCC+ cartridge in subslot 2 without WiFi or subslot 3 when WiFi is enabled. This is intended for games, loaders, or Nextor BASIC sessions that explicitly scan for an SCC cartridge in another slot.
+The external SCC and SCC+ profiles are available for non-SYSTEM ROM entries and supported Sunrise Nextor SYSTEM entries. Non-SYSTEM ROMs launch in an expanded cartridge layout with the selected game mapper in subslot 0 and the virtual SCC/SCC+ cartridge surface in subslot 1. Supported Sunrise Nextor SYSTEM launches keep Nextor storage in its normal subslot, keep mapper RAM available only for the explicit `+ 1MB Mapper` entries, and place the virtual SCC/SCC+ cartridge in subslot 2 without WiFi or subslot 3 when WiFi is enabled. MegaRAM Nextor entries reserve their expanded layout for Nextor, mapper RAM, and MegaRAM, so Explorer does not offer external SCC/SCC+ for those entries.
 
-The YM2151 SFG01/SFG05 profiles are available for supported non-SYSTEM ROM entries and Sunrise Nextor SYSTEM entries. Non-SYSTEM ROMs use the same expanded layout as the external SCC profiles: subslot 0 remains the selected game mapper, while subslot 1 exposes an SFG-like memory-mapped YM2151 surface and the selected Yamaha SFG BIOS image. Sunrise Nextor SYSTEM launches use a mapper-backed expanded layout so Nextor still has RAM available; the SFG surface is placed in subslot 2 without WiFi or subslot 3 when WiFi is enabled. The implemented SFG memory window responds at slot-local `0x3FF0` for the YM2151 address register and `0x3FF1` for YM2151 data/status. MIDI/keyboard-facing SFG addresses return idle values in this first implementation. The Explorer UF2 stores `SFG_64K.ROM` as a hidden flash payload; the SFG05 profile exposes the first 32K BIOS image and the SFG01 profile exposes the second 32K BIOS image.
+The YM2151 SFG01/SFG05 profiles are available for supported non-SYSTEM ROM entries and supported Sunrise Nextor SYSTEM entries. Non-SYSTEM ROMs use the same expanded layout as the external SCC profiles: subslot 0 remains the selected game mapper, while subslot 1 exposes an SFG-like memory-mapped YM2151 surface and the selected Yamaha SFG BIOS image. Supported Sunrise Nextor SYSTEM launches use a mapper-backed expanded layout so Nextor still has RAM available; the SFG surface is placed in subslot 2 without WiFi or subslot 3 when WiFi is enabled. MegaRAM Nextor entries reserve their expanded layout for Nextor, mapper RAM, and MegaRAM, so Explorer does not offer YM2151/SFG for those entries. The implemented SFG memory window responds at slot-local `0x3FF0` for the YM2151 address register and `0x3FF1` for YM2151 data/status. MIDI/keyboard-facing SFG addresses return idle values in this first implementation. The Explorer UF2 stores `SFG_64K.ROM` as a hidden flash payload; the SFG05 profile exposes the first 32K BIOS image and the SFG01 profile exposes the second 32K BIOS image.
 
-The Dual PSG and MSX-MUSIC profiles are available for regular non-SYSTEM ROMs that are not Konami SCC or Manbow2, and Sunrise Nextor SYSTEM entries can use the SYSTEM audio service for the supported SYSTEM profiles. When MSX-MUSIC is selected for Sunrise Nextor, Explorer keeps the Nextor storage layout active and places the FM-PAC BIOS/control surface in subslot 2 without WiFi or subslot 3 with WiFi. These cartridge audio profiles are not offered for NEO system entries, folders, or SCC-capable ROMs.
+The Dual PSG and MSX-MUSIC profiles are available for regular non-SYSTEM ROMs that are not Konami SCC or Manbow2, and supported Sunrise Nextor SYSTEM entries can use the SYSTEM audio service for the supported SYSTEM profiles. When MSX-MUSIC is selected for supported Sunrise Nextor entries, Explorer keeps the Nextor storage layout active and places the FM-PAC BIOS/control surface in subslot 2 without WiFi or subslot 3 with WiFi. These cartridge audio profiles are not offered for NEO system entries, folders, SCC-capable ROMs, Sunrise + 1MB mapper entries, Carnivore2 entries, or MegaRAM entries.
 
 Primary PSG mirroring is intended for normal ROM launches from flash or microSD, including ROMs downloaded from File Hunter after they have been saved to the card. SYSTEM/storage entries that reserve core 1 for storage backends do not use the PSG DAC mirror path.
 

@@ -104,14 +104,18 @@ The implementation uses `jmp pin` polling to re-check slot/IORQ validity while w
 
 ### Sunrise IDE integration
 
-The firmware supports four Sunrise IDE modes, selected by mapper type:
+The firmware supports Sunrise IDE modes selected by mapper type:
 
 | Option | Type | Core 1 Backend | Storage |
 |--------|------|----------------|---------|
 | `-s1` | 15 | `sunrise_sd_task()` | microSD via SPI0 |
 | `-m1` | 16 | `sunrise_sd_task()` | microSD via SPI0 |
+| `-c1` | 17 | `sunrise_sd_task()` | microSD via SPI0 |
+| `-r1` | 19 | `sunrise_sd_task()` | microSD via SPI0 |
 | `-s2` | 10 | `sunrise_usb_task()` | USB via TinyUSB |
 | `-m2` | 11 | `sunrise_usb_task()` | USB via TinyUSB |
+| `-c2` | 18 | `sunrise_usb_task()` | USB via TinyUSB |
+| `-r2` | 20 | `sunrise_usb_task()` | USB via TinyUSB |
 
 For all modes:
 
@@ -120,18 +124,18 @@ For all modes:
 - The embedded Nextor 2.1.4 Sunrise IDE kernel ROM (128KB, 8 × 16KB pages) is served from flash.
 - IDE register overlay at `0x7C00`–`0x7EFF` is intercepted when the IDE enable bit is set.
 
-For USB modes (`-s2`/`-m2`):
+For USB modes (`-s2`/`-m2`/`-c2`/`-r2`):
 
 - Core 1 runs the TinyUSB USB host stack with asynchronous MSC read/write and a 3-second timeout watchdog.
 - Device info for ATA IDENTIFY comes from the USB SCSI INQUIRY response.
 
-For microSD modes (`-s1`/`-m1`):
+For microSD modes (`-s1`/`-m1`/`-c1`/`-r1`):
 
 - Core 1 runs synchronous SPI block I/O via `disk_read()`/`disk_write()` from the no-OS-FatFS library.
 - Device info for ATA IDENTIFY is extracted from the SD card's CID register (OEM ID, Product Name, Revision).
 - SD card hardware: SPI0, CS=GPIO33, SCK=GPIO34, MOSI=GPIO35, MISO=GPIO36 at 31.25 MHz.
 
-In mapper mode (`-m`), additionally:
+In mapper-backed Sunrise modes (`-m1`/`-m2`/`-c1`/`-c2`/`-r1`/`-r2`), additionally:
 
 - PIO1 SM0/SM1 run `msx_io_read_responder` / `msx_io_write_captor` to intercept I/O ports FC–FF.
 - For `loadrom.pio` `-m1`/`-m2`, 1MB of external PSRAM on QMI CS1 (GPIO47) is used as mapper RAM (64 × 16KB pages), accessed through the uncached CS1 window.

@@ -1,5 +1,14 @@
 # Change Log
 
+## PicoVerse 2350 Explorer v2.38
+
+- Bumped Explorer version to v2.38.
+- Added Explorer `-a`/`--allnextor` to include every embedded Nextor system option in one build while still scanning and appending ROMs from the current folder.
+- Added Explorer `-r1`/`--megaram-sd` and `-r2`/`--megaram-usb` Nextor system options with the existing Sunrise IDE ROM, a 1MB MSX memory mapper, and a separate 1MB PSRAM-backed MegaRAM surface using the Cartucho II-compatible latch/write-enable behavior from LoadROM.
+- Fixed the MSX menu mapper label for MegaRAM Nextor entries so mapper IDs 19/20 display as `SYSTEM (detected)` instead of `Unknown (detected)`.
+- Applied the same mapper-backed MSX menu restrictions to MegaRAM entries: PSG Mirror is disabled, MSX-MUSIC is unavailable, Wi-Fi is not exposed, and unsupported saved external-audio selections are sanitized back to the base MegaRAM launch path.
+- Updated the Explorer manual and related public documentation for the new Explorer Nextor options and `-a`/`--allnextor` shortcut.
+
 ## PicoVerse 2350 Explorer v2.37
 
 - Bumped Explorer version to v2.37.

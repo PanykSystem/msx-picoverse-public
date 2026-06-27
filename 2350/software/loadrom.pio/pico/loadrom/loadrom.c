@@ -139,7 +139,7 @@ static inline audio_mode_t resolve_audio_mode(uint8_t rom_type, uint8_t base_rom
 
 static inline bool is_system_rom_type(uint8_t base_rom_type)
 {
-    return base_rom_type >= 10u && base_rom_type <= 18u &&
+    return base_rom_type >= 10u && base_rom_type <= 20u &&
            base_rom_type != 12u && base_rom_type != 13u && base_rom_type != 14u;
 }
 
@@ -563,6 +563,7 @@ static bool __no_inline_not_in_flash_func(psram_init)(void)
 // -----------------------------------------------------------------------
 static psram_region_t mapper_region;
 static psram_region_t c2_rom_region;
+static psram_region_t megaram_region;
 
 static struct {
     uint32_t next_free;
@@ -573,6 +574,7 @@ static void psram_mem_init(void)
     psram_mgr.next_free = 0;
     memset(&mapper_region, 0, sizeof(mapper_region));
     memset(&c2_rom_region, 0, sizeof(c2_rom_region));
+    memset(&megaram_region, 0, sizeof(megaram_region));
 }
 
 static bool psram_alloc(uint32_t size, psram_region_t *region)
@@ -591,6 +593,7 @@ static void psram_free_all(void)
     psram_mgr.next_free = 0;
     memset(&mapper_region, 0, sizeof(mapper_region));
     memset(&c2_rom_region, 0, sizeof(c2_rom_region));
+    memset(&megaram_region, 0, sizeof(megaram_region));
 }
 
 // -----------------------------------------------------------------------
@@ -613,6 +616,40 @@ static inline void __not_in_flash_func(mapper_write_byte)(uint32_t offset, uint8
 static inline uint8_t __not_in_flash_func(mapper_read_byte)(uint32_t offset)
 {
     return mapper_region.ptr[offset];
+}
+
+static void __not_in_flash_func(megaram_fill_ff)(void)
+{
+    uint32_t *words = (uint32_t *)megaram_region.ptr;
+    for (uint32_t index = 0; index < (megaram_region.size / sizeof(uint32_t)); ++index)
+    {
+        words[index] = 0xFFFFFFFFu;
+    }
+}
+
+static inline uint8_t __not_in_flash_func(megaram_page_from_addr)(uint16_t addr)
+{
+    return (uint8_t)((addr >> 13) & 0x03u);
+}
+
+static inline bool __not_in_flash_func(megaram_bank_switch_write)(uint16_t addr, uint8_t data, uint8_t bank_reg[4])
+{
+    bank_reg[megaram_page_from_addr(addr)] = data & 0x7Fu;
+    return true;
+}
+
+static inline void __not_in_flash_func(megaram_write_byte)(uint16_t addr, uint8_t data, const uint8_t bank_reg[4])
+{
+    uint8_t page = megaram_page_from_addr(addr);
+    uint32_t offset = ((uint32_t)(bank_reg[page] & 0x7Fu) << 13) | (addr & 0x1FFFu);
+    megaram_region.ptr[offset] = data;
+}
+
+static inline uint8_t __not_in_flash_func(megaram_read_byte)(uint16_t addr, const uint8_t bank_reg[4])
+{
+    uint8_t page = megaram_page_from_addr(addr);
+    uint32_t offset = ((uint32_t)(bank_reg[page] & 0x7Fu) << 13) | (addr & 0x1FFFu);
+    return megaram_region.ptr[offset];
 }
 
 // -----------------------------------------------------------------------
@@ -4050,6 +4087,173 @@ void __no_inline_not_in_flash_func(loadrom_c2_usb)(uint32_t offset, bool cache_e
     loadrom_c2_common(offset, cache_enable, sunrise_usb_task, sunrise_usb_set_ide_ctx);
 }
 
+static void __not_in_flash_func(loadrom_sunrise_megaram_common)(
+    uint32_t offset,
+    bool cache_enable,
+    sunrise_backend_task_fn_t core1_task,
+    sunrise_backend_attach_fn_t attach_ctx)
+{
+    sunrise_wait_for_expanded_bootstrap();
+
+    pio_sm_set_enabled(pio0, 0, false);
+    pio_sm_set_enabled(pio0, 1, false);
+    gpio_init(PIN_WAIT);
+    gpio_set_dir(PIN_WAIT, GPIO_OUT);
+    gpio_put(PIN_WAIT, 0);
+
+    const uint8_t *rom_base;
+    uint32_t available_length;
+    prepare_sunrise_mapper_rom_source(offset, cache_enable, &rom_base, &available_length);
+
+    static sunrise_ide_t ide;
+    sunrise_ide_init(&ide);
+
+    attach_ctx(&ide);
+    multicore_launch_core1(core1_task);
+
+    psram_mem_init();
+    if (!psram_alloc(MAPPER_SIZE, &mapper_region) ||
+        !psram_alloc(MEGARAM_SIZE, &megaram_region))
+    {
+        while (true) { tight_loop_contents(); }
+    }
+
+    uint8_t mapper_reg[4] = { 3, 2, 1, 0 };
+    uint8_t megaram_bank_reg[4] = { 0, 1, 2, 3 };
+    bool megaram_write_enabled = false;
+    uint8_t subslot_reg = 0x10u;
+
+    mapper_fill_ff();
+    megaram_fill_ff();
+
+    msx_pio_io_bus_init();
+    msx_pio_bus_init();
+
+    while (true)
+    {
+        uint16_t waddr;
+        uint8_t wdata;
+        while (pio_try_get_write(&waddr, &wdata))
+        {
+            if (waddr == 0xFFFFu)
+            {
+                subslot_reg = wdata;
+                continue;
+            }
+
+            uint8_t page = (waddr >> 14) & 0x03u;
+            uint8_t active_subslot = (subslot_reg >> (page * 2)) & 0x03u;
+
+            if (active_subslot == 0)
+            {
+                if (waddr >= 0x4000u && waddr <= 0x7FFFu)
+                    sunrise_ide_handle_write(&ide, waddr, wdata);
+            }
+            else if (active_subslot == 1)
+            {
+                uint8_t mapper_page = mapper_page_from_reg(mapper_reg[page]);
+                uint32_t mapper_offset = ((uint32_t)mapper_page << 14) | (waddr & 0x3FFFu);
+                mapper_write_byte(mapper_offset, wdata);
+            }
+            else if (active_subslot == 3 && waddr >= 0x4000u && waddr <= 0xBFFFu)
+            {
+                if (megaram_write_enabled)
+                    megaram_write_byte(waddr, wdata, megaram_bank_reg);
+                else
+                    megaram_bank_switch_write(waddr, wdata, megaram_bank_reg);
+            }
+        }
+
+        uint16_t io_addr;
+        uint8_t io_data;
+        while (pio_try_get_io_write(&io_addr, &io_data))
+        {
+            uint8_t port = io_addr & 0xFFu;
+            if (port >= 0xFCu && port <= 0xFFu)
+                mapper_reg[port - 0xFCu] = io_data & 0x3Fu;
+            else if (port == 0x8Eu || port == 0x8Fu)
+                megaram_write_enabled = false;
+        }
+
+        while (pio_try_get_io_read(&io_addr))
+        {
+            uint8_t port = io_addr & 0xFFu;
+            bool in_window = false;
+            uint8_t data = 0xFFu;
+            if (port >= 0xFCu && port <= 0xFFu)
+            {
+                in_window = true;
+                data = (uint8_t)(0xC0u | (mapper_reg[port - 0xFCu] & 0x3Fu));
+            }
+            else if (port == 0x8Eu || port == 0x8Fu)
+            {
+                megaram_write_enabled = true;
+            }
+            pio_sm_put_blocking(msx_io_bus.pio_read, msx_io_bus.sm_io_read, pio_build_token(in_window, data));
+        }
+
+        if (!pio_sm_is_rx_fifo_empty(msx_bus.pio, msx_bus.sm_read))
+        {
+            uint16_t addr = (uint16_t)pio_sm_get(msx_bus.pio, msx_bus.sm_read);
+            uint8_t data = 0xFFu;
+            bool in_window = false;
+
+            if (addr == 0xFFFFu)
+            {
+                in_window = true;
+                data = (uint8_t)~subslot_reg;
+            }
+            else
+            {
+                uint8_t page = (addr >> 14) & 0x03u;
+                uint8_t active_subslot = (subslot_reg >> (page * 2)) & 0x03u;
+
+                if (active_subslot == 0)
+                {
+                    if (addr >= 0x4000u && addr <= 0x7FFFu)
+                    {
+                        in_window = true;
+                        uint8_t ide_data;
+                        if (sunrise_ide_handle_read(&ide, addr, &ide_data))
+                            data = ide_data;
+                        else
+                        {
+                            uint8_t seg = ide.segment;
+                            uint32_t rel = ((uint32_t)seg << 14) + (addr & 0x3FFFu);
+                            if (available_length == 0u || rel < available_length)
+                                data = read_rom_byte(rom_base, rel);
+                        }
+                    }
+                }
+                else if (active_subslot == 1)
+                {
+                    in_window = true;
+                    uint8_t mapper_page = mapper_page_from_reg(mapper_reg[page]);
+                    uint32_t mapper_offset = ((uint32_t)mapper_page << 14) | (addr & 0x3FFFu);
+                    data = mapper_read_byte(mapper_offset);
+                }
+                else if (active_subslot == 3 && addr >= 0x4000u && addr <= 0xBFFFu)
+                {
+                    in_window = true;
+                    data = megaram_read_byte(addr, megaram_bank_reg);
+                }
+            }
+
+            pio_sm_put_blocking(msx_bus.pio, msx_bus.sm_read, pio_build_token(in_window, data));
+        }
+    }
+}
+
+void __no_inline_not_in_flash_func(loadrom_sunrise_megaram_sd)(uint32_t offset, bool cache_enable)
+{
+    loadrom_sunrise_megaram_common(offset, cache_enable, sunrise_sd_task, sunrise_sd_set_ide_ctx);
+}
+
+void __no_inline_not_in_flash_func(loadrom_sunrise_megaram_usb)(uint32_t offset, bool cache_enable)
+{
+    loadrom_sunrise_megaram_common(offset, cache_enable, sunrise_usb_task, sunrise_usb_set_ide_ctx);
+}
+
 int __no_inline_not_in_flash_func(main)()
 {
     // Keep existing RP2350 flash timing setup.
@@ -4065,8 +4269,9 @@ int __no_inline_not_in_flash_func(main)()
     bool wifi_enabled = (rom_type & WIFI_FLAG) != 0;
     uint8_t base_rom_type = decode_base_rom_type(rom_type, rom_name);
 
-    if ((base_rom_type == 11u || base_rom_type == 16u
-         || base_rom_type == 17u || base_rom_type == 18u) && !psram_init())
+        if ((base_rom_type == 11u || base_rom_type == 16u
+            || base_rom_type == 17u || base_rom_type == 18u
+            || base_rom_type == 19u || base_rom_type == 20u) && !psram_init())
     {
         while (true)
         {
@@ -4195,6 +4400,12 @@ int __no_inline_not_in_flash_func(main)()
             break;
         case 18:
             loadrom_c2_usb(ROM_RECORD_SIZE, true);
+            break;
+        case 19:
+            loadrom_sunrise_megaram_sd(ROM_RECORD_SIZE, true);
+            break;
+        case 20:
+            loadrom_sunrise_megaram_usb(ROM_RECORD_SIZE, true);
             break;
         default:
             break;
