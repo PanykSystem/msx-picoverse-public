@@ -1,5 +1,10 @@
 # Change Log
 
+## PicoVerse 2350 Loadrom v2.65
+
+- Bumped the loadrom build version to v2.65.
+- Gated the standalone OPL4 USB diagnostic counters out of production builds so timer/IRQ debug increments and output peak globals are only compiled when `OPL4_USB_DEBUG` is enabled.
+
 ## PicoVerse 2350 Loadrom v2.64
 
 - Bumped the loadrom build version to v2.64.
