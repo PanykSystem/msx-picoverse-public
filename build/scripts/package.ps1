@@ -319,6 +319,10 @@ function Get-LatestChangeLogEntry {
     $headingIndex = -1
     for ($index = 0; $index -lt $lines.Count; $index++) {
         if ($lines[$index] -match '^#{1,2}\s+(.+?)\s*$') {
+            $titleCandidate = $Matches[1].Trim()
+            if ($titleCandidate -ieq "Change Log") {
+                continue
+            }
             $headingIndex = $index
             break
         }
