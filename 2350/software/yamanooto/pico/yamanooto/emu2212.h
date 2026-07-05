@@ -60,7 +60,9 @@ void SCC_delete(SCC *scc) ;
 int16_t SCC_calc(SCC *scc) ;
 void SCC_write(SCC *scc, uint32_t adr, uint32_t val) ;
 void SCC_writeReg(SCC *scc, uint32_t adr, uint32_t val) ;
+void SCC_writeMem(SCC *scc, uint32_t adr, uint32_t val) ;
 uint32_t SCC_read(SCC *scc, uint32_t adr) ;
+uint32_t SCC_readMem(SCC *scc, uint32_t adr) ;
 uint32_t SCC_setMask(SCC *scc, uint32_t adr) ;
 uint32_t SCC_toggleMask(SCC *scc, uint32_t adr) ;
 

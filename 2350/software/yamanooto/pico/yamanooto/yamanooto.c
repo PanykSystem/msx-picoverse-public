@@ -44,6 +44,8 @@
 // This work is licensed under a "Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International
 // License". https://creativecommons.org/licenses/by-nc-sa/4.0/
 
+#include <stdarg.h>
+#include <stdio.h>
 #include <string.h>
 #include "pico/stdlib.h"
 #include "pico/multicore.h"
@@ -90,6 +92,20 @@ typedef struct {
 static msx_pio_io_bus_t msx_io_bus;
 static bool msx_io_bus_programs_loaded = false;
 
+static void debug_trace(const char *fmt, ...)
+{
+#if YAMANOOTO_USB_STDIO_DEBUG
+    va_list args;
+    va_start(args, fmt);
+    vprintf(fmt, args);
+    va_end(args);
+    printf("\r\n");
+    fflush(stdout);
+#else
+    (void)fmt;
+#endif
+}
+
 // -----------------------------------------------------------------------
 // ROM source
 // -----------------------------------------------------------------------
@@ -115,6 +131,9 @@ static int audio_dma_channel = -1;
 // each chip's *sound-register* writes and sampled once per audio buffer.
 static volatile uint32_t scc_activity = 0;   // bumped on SCC register-window writes (core 0)
 static volatile uint32_t fm_activity = 0;    // bumped on OPLL register writes (core 1)
+static volatile bool scc_render_requested = false;
+static volatile uint32_t scc_debug_writes = 0;
+static volatile uint32_t fm_debug_writes = 0;
 
 
 // -----------------------------------------------------------------------
@@ -126,6 +145,10 @@ static volatile uint8_t configReg = 0;   // CFGR (0x7FFD)
 static volatile uint8_t fpgaFsm   = 0;   // FPGA ID read state machine
 static uint16_t bankRegs[4] = {0, 1, 2, 3};  // Offset-adjusted 10-bit bank registers
 static uint8_t  rawBanks[4] = {0, 1, 2, 3};  // Raw values (used for SCC activation)
+static uint8_t sccMode = 0;                    // Yamanooto SCC+ mode register (0xBFFE/0xBFFF)
+
+enum { YAMA_ENGINE_NONE = 0, YAMA_ENGINE_SCC, YAMA_ENGINE_FM };
+#define YAMA_ENGINE_IDLE_BUFFERS 90
 
 // FPGA "read ID" response sequence (just enough for detection code to pass)
 static const uint8_t FPGA_ID[5] = { 0xFFu, 0x1Fu, 0x23u, 0x00u, 0x00u };
@@ -336,6 +359,87 @@ static inline uint8_t __not_in_flash_func(yama_read_flash)(uint32_t faddr)
     return 0xFFu;  // unprogrammed flash reads back as 0xFF
 }
 
+static inline bool __not_in_flash_func(yama_scc_register_access)(uint16_t address)
+{
+    if (configReg & YAMA_K4)
+        return false;
+
+    if (sccMode & 0x20u)
+        return (rawBanks[3] & 0x80u) && address >= 0xB800u && address < 0xBFFEu;
+
+    return ((rawBanks[2] & 0x3Fu) == 0x3Fu) && address >= 0x9800u && address < 0xA000u;
+}
+
+static inline bool __not_in_flash_func(yama_scc_raw_enabled)(void)
+{
+    if (configReg & YAMA_K4)
+        return false;
+
+    if (sccMode & 0x20u)
+        return (rawBanks[3] & 0x80u) != 0u;
+
+    return (rawBanks[2] & 0x3Fu) == 0x3Fu;
+}
+
+static inline uint16_t __not_in_flash_func(yama_scc_emulator_address)(uint16_t address)
+{
+    return (uint16_t)(address & 0x00FFu);
+}
+
+static inline void __not_in_flash_func(yama_sync_scc_mapper_state)(void)
+{
+    static uint8_t last_active = 0xFFu;
+    static uint8_t last_mode = 0xFFu;
+    static uint16_t last_base = 0xFFFFu;
+
+    if (configReg & YAMA_K4)
+    {
+        scc_instance.active = 0;
+        scc_render_requested = false;
+        if (last_active != 0u || last_mode != 0u || last_base != 0u)
+        {
+            debug_trace("YAMA SCC sync K4 active=0 cfgr=%02X raw=%02X/%02X", configReg, rawBanks[2], rawBanks[3]);
+            last_active = 0u;
+            last_mode = 0u;
+            last_base = 0u;
+        }
+        return;
+    }
+
+    if (sccMode & 0x20u)
+    {
+        scc_instance.base_adr = 0xB000u;
+        scc_instance.mode = 1;
+        scc_instance.active = (rawBanks[3] & 0x80u) ? 1u : 0u;
+    }
+    else
+    {
+        scc_instance.base_adr = 0x9000u;
+        scc_instance.mode = 0;
+        scc_instance.active = ((rawBanks[2] & 0x3Fu) == 0x3Fu) ? 1u : 0u;
+    }
+
+    if (last_active != (uint8_t)scc_instance.active ||
+        last_mode != (uint8_t)scc_instance.mode ||
+        last_base != (uint16_t)scc_instance.base_adr)
+    {
+        debug_trace("YAMA SCC sync active=%u mode=%u base=%04X sccMode=%02X raw2=%02X raw3=%02X banks=%03X/%03X cfgr=%02X render=%u",
+                    (unsigned)scc_instance.active,
+                    (unsigned)scc_instance.mode,
+                    (unsigned)scc_instance.base_adr,
+                    (unsigned)sccMode,
+                    (unsigned)rawBanks[2],
+                    (unsigned)rawBanks[3],
+                    (unsigned)bankRegs[2],
+                    (unsigned)bankRegs[3],
+                    (unsigned)configReg,
+                    scc_render_requested ? 1u : 0u);
+        last_active = (uint8_t)scc_instance.active;
+        last_mode = (uint8_t)scc_instance.mode;
+        last_base = (uint16_t)scc_instance.base_adr;
+    }
+}
+
 // -----------------------------------------------------------------------
 // Memory read handler (returns the byte the cartridge drives onto the bus)
 // -----------------------------------------------------------------------
@@ -366,12 +470,8 @@ static inline uint8_t __not_in_flash_func(yama_mem_read)(uint16_t addr)
     // SCC / SCC+ register reads (K4 mode has no SCC)
     if (!(configReg & YAMA_K4))
     {
-        if (scc_instance.active)
-        {
-            uint32_t scc_reg_start = scc_instance.base_adr + 0x800u; // 0x9800 or 0xB800
-            if (maddr >= scc_reg_start && maddr <= (scc_reg_start + 0xFFu))
-                return (uint8_t)SCC_read(&scc_instance, maddr);
-        }
+        if (yama_scc_register_access(maddr))
+            return (uint8_t)SCC_readMem(&scc_instance, yama_scc_emulator_address(maddr));
         // SCC+ mode register readback at 0xBFFE-0xBFFF
         if ((maddr & 0xFFFEu) == 0xBFFEu)
             return (uint8_t)SCC_read(&scc_instance, maddr);
@@ -394,6 +494,7 @@ static inline void __not_in_flash_func(yama_mem_write)(uint16_t addr, uint8_t da
         if (addr == YAMA_ENAR)
         {
             enableReg = data;
+            debug_trace("YAMA ENAR=%02X", data);
         }
         else if (enableReg & YAMA_REGEN)
         {
@@ -413,9 +514,12 @@ static inline void __not_in_flash_func(yama_mem_write)(uint16_t addr, uint8_t da
                     break;
                 case YAMA_CFGR:
                     configReg = data;
+                    yama_sync_scc_mapper_state();
+                    debug_trace("YAMA CFGR=%02X offset=%u", data, (unsigned)yama_bank_offset());
                     break;
                 case YAMA_OFFR:
                     offsetReg = data;
+                    debug_trace("YAMA OFFR=%02X offset=%u", data, (unsigned)yama_bank_offset());
                     break;
                 default:
                     break;
@@ -435,6 +539,7 @@ static inline void __not_in_flash_func(yama_mem_write)(uint16_t addr, uint8_t da
 
     if (configReg & YAMA_K4)
     {
+        yama_sync_scc_mapper_state();
         // Konami-4: bank 0 (0x4000-0x5FFF) is fixed; the others switch
         if (!(configReg & YAMA_MDIS) && maddr >= 0x6000u)
         {
@@ -444,26 +549,51 @@ static inline void __not_in_flash_func(yama_mem_write)(uint16_t addr, uint8_t da
         return;
     }
 
-    // Konami-SCC: feed every mapper-region write to the SCC engine, which
-    // auto-detects SCC enable (bank2==0x3F), SCC+ enable (bank3 bit7) and the
-    // mode register at 0xBFFE.
-    SCC_write(&scc_instance, maddr, data);
-
-    // Record SCC sound activity for the on-the-fly engine selector: only count
-    // writes to the SCC register window (0x9800-0x9FFF / 0xB800-0xBFFF) while the
-    // SCC is enabled, so bank-switch writes and FM games do not trigger it.
-    if (scc_instance.active &&
-        (((maddr & 0xF800u) == 0x9800u) || ((maddr & 0xF800u) == 0xB800u)))
-    {
-        scc_activity++;
-    }
-
-    // Bank switch on [0x5000,0x57FF] [0x7000,0x77FF] [0x9000,0x97FF] [0xB000,0xB7FF]
-    if (((maddr & 0x1800u) == 0x1000u) && !(configReg & YAMA_MDIS))
+    bool bank_switch_write = ((maddr & 0x1800u) == 0x1000u) && !(configReg & YAMA_MDIS);
+    if (bank_switch_write)
     {
         bankRegs[page8kB] = (uint16_t)(((uint32_t)data + offset) & 0x3FFu);
         rawBanks[page8kB] = data;
     }
+
+    if ((maddr & 0xFFFEu) == 0xBFFEu)
+    {
+        sccMode = data;
+        debug_trace("YAMA SCC mode write addr=%04X data=%02X", maddr, data);
+    }
+
+    yama_sync_scc_mapper_state();
+
+    bool scc_register_write = yama_scc_register_access(maddr);
+
+    // Konami-SCC: Yamanooto applies the ROM offset only to flash banks. SCC
+    // visibility comes from raw bank/mode state, then the SCC core receives
+    // only the low SCC register byte, exactly like openMSX's Yamanooto device.
+    if (scc_register_write)
+    {
+        scc_render_requested = true;
+        SCC_writeMem(&scc_instance, yama_scc_emulator_address(maddr), data);
+        uint32_t count = ++scc_debug_writes;
+        if (count <= 128u || ((count & 0xFFu) == 0u))
+        {
+            debug_trace("YAMA SCC write#%lu addr=%04X reg=%02X data=%02X active=%u mode=%u render=%u raw2=%02X raw3=%02X",
+                        (unsigned long)count,
+                        (unsigned)maddr,
+                        (unsigned)yama_scc_emulator_address(maddr),
+                        (unsigned)data,
+                        (unsigned)scc_instance.active,
+                        (unsigned)scc_instance.mode,
+                        scc_render_requested ? 1u : 0u,
+                        (unsigned)rawBanks[2],
+                        (unsigned)rawBanks[3]);
+        }
+    }
+
+    // Record SCC sound activity for the on-the-fly engine selector. Yamanooto's
+    // SCC visibility is controlled by raw bank values, not the offset-adjusted
+    // flash bank, so use the same raw-bank window test as the read path.
+    if (scc_register_write || scc_render_requested)
+        scc_activity++;
 }
 
 // -----------------------------------------------------------------------
@@ -499,7 +629,11 @@ static inline void __not_in_flash_func(msx_music_apply)(uint8_t port, uint8_t da
     if (msx_music_instance)
     {
         OPLL_writeIO(msx_music_instance, port, data);
+        scc_render_requested = false;
         fm_activity++;   // record FM activity for the on-the-fly engine selector
+        uint32_t count = ++fm_debug_writes;
+        if (count <= 64u || ((count & 0xFFu) == 0u))
+            debug_trace("YAMA FM write#%lu port=%u data=%02X keys=%08lX", (unsigned long)count, (unsigned)port, (unsigned)data, (unsigned long)msx_music_instance->slot_key_status);
     }
 }
 
@@ -751,29 +885,67 @@ static void __no_inline_not_in_flash_func(core1_yamanooto_audio)(void)
     // latched "render FM" would then play the idle OPLL as a constant tone
     // (a beep) under pure-PSG games. Rendering both heavy engines at once would
     // also overrun the core-1 sample budget.
-    enum { ENGINE_NONE = 0, ENGINE_SCC, ENGINE_FM };
+    int engine = YAMA_ENGINE_NONE;
+    uint32_t seen_scc = scc_activity;
     uint32_t seen_fm = fm_activity;
-    int fm_idle = FM_IDLE_BUFFERS;   // start fully idle (no FM)
+    int scc_idle = YAMA_ENGINE_IDLE_BUFFERS;
+    int fm_idle = YAMA_ENGINE_IDLE_BUFFERS;   // start fully idle (no FM)
+    int last_engine = -1;
 
     while (true)
     {
         struct audio_buffer *buffer = take_audio_buffer_servicing_psg();
+
+        uint32_t now_scc = scc_activity;
+        if (now_scc != seen_scc)
+        {
+            seen_scc = now_scc;
+            scc_idle = 0;
+            engine = YAMA_ENGINE_SCC;
+        }
+        else if (scc_idle < YAMA_ENGINE_IDLE_BUFFERS)
+        {
+            ++scc_idle;
+        }
 
         uint32_t now_fm = fm_activity;
         if (now_fm != seen_fm)
         {
             seen_fm = now_fm;
             fm_idle = 0;
+            if (scc_idle >= YAMA_ENGINE_IDLE_BUFFERS)
+                engine = YAMA_ENGINE_FM;
         }
-        else if (fm_idle < FM_IDLE_BUFFERS)
+        else if (fm_idle < YAMA_ENGINE_IDLE_BUFFERS)
         {
             ++fm_idle;
         }
+        bool scc_playing = scc_render_requested;
         bool fm_keyed = (msx_music_instance != NULL) && (msx_music_instance->slot_key_status != 0u);
-        bool fm_playing = fm_keyed || (fm_idle < FM_IDLE_BUFFERS);
+        bool fm_playing = !scc_playing && (fm_keyed || (fm_idle < YAMA_ENGINE_IDLE_BUFFERS));
 
-        int engine = fm_playing ? ENGINE_FM
-                   : (scc_instance.active ? ENGINE_SCC : ENGINE_NONE);
+        if (engine == YAMA_ENGINE_SCC && !scc_playing)
+            engine = fm_playing ? YAMA_ENGINE_FM : YAMA_ENGINE_NONE;
+        else if (engine == YAMA_ENGINE_FM && !fm_playing)
+            engine = scc_playing ? YAMA_ENGINE_SCC : YAMA_ENGINE_NONE;
+        else if (scc_playing)
+            engine = YAMA_ENGINE_SCC;
+        else if (engine == YAMA_ENGINE_NONE)
+            engine = scc_playing ? YAMA_ENGINE_SCC : (fm_playing ? YAMA_ENGINE_FM : YAMA_ENGINE_NONE);
+
+        if (engine != last_engine)
+        {
+            debug_trace("YAMA audio engine=%d scc=%u fm=%u fmKey=%u sccReq=%u sccWrites=%lu fmWrites=%lu keys=%08lX",
+                        engine,
+                        scc_playing ? 1u : 0u,
+                        fm_playing ? 1u : 0u,
+                        fm_keyed ? 1u : 0u,
+                        scc_render_requested ? 1u : 0u,
+                        (unsigned long)scc_debug_writes,
+                        (unsigned long)fm_debug_writes,
+                        msx_music_instance ? (unsigned long)msx_music_instance->slot_key_status : 0ul);
+            last_engine = engine;
+        }
 
         int16_t *samples = (int16_t *)buffer->buffer->bytes;
         for (int i = 0; i < SCC_AUDIO_BUFFER_SAMPLES; i++)
@@ -784,15 +956,15 @@ static void __no_inline_not_in_flash_func(core1_yamanooto_audio)(void)
             // sample, exactly like Explorer's SCC + PSG path -- no software DC
             // blocker (the I2S DAC output is AC-coupled in hardware), so the
             // SCC + PSG sum is never pushed into extra clipping/noise.
-            int32_t psg = (engine == ENGINE_FM) ? psg_mix_gated() : psg_mix_sample();
+            int32_t psg = (engine == YAMA_ENGINE_FM) ? psg_mix_gated() : psg_mix_sample();
             int16_t s;
-            if (engine == ENGINE_FM)
+            if (engine == YAMA_ENGINE_FM)
             {
                 // Soft-limit the FM + PSG mix so peaks are compressed rather than
                 // hard-clipped (hard clipping sounds harsh / robotic).
                 s = msx_music_soft_limit(msx_music_calc_fm() + psg);
             }
-            else if (engine == ENGINE_SCC)
+            else if (engine == YAMA_ENGINE_SCC)
             {
                 // SCC + PSG: hard clamp.
                 s = clamp_i16(((int32_t)SCC_calc(&scc_instance) << SCC_VOLUME_SHIFT) + psg);
@@ -1002,6 +1174,8 @@ static void __no_inline_not_in_flash_func(yamanooto_run_fmpac)(void)
     rom_base = rom + ROM_RECORD_SIZE;
     const uint8_t *fmpac_bios_base = rom_base + active_rom_size;
 
+    debug_trace("YAMA run_fmpac rom_size=%lu", (unsigned long)active_rom_size);
+
     yama_init_sound_chips();
 
     // Cold-boot expanded-slot handshake (serves a bootstrap ROM, then restarts).
@@ -1037,6 +1211,7 @@ static void __no_inline_not_in_flash_func(yamanooto_run_fmpac)(void)
             if (waddr == 0xFFFFu)
             {
                 subslot_reg = wdata;
+                debug_trace("YAMA subslot=%02X", subslot_reg);
                 continue;
             }
 
@@ -1062,6 +1237,7 @@ static void __no_inline_not_in_flash_func(yamanooto_run_fmpac)(void)
                 if (waddr == 0xFFFFu)
                 {
                     subslot_reg = wdata;
+                    debug_trace("YAMA subslot=%02X", subslot_reg);
                     continue;
                 }
                 uint8_t wpage = (uint8_t)((waddr >> 14) & 0x03u);
@@ -1102,11 +1278,15 @@ int __no_inline_not_in_flash_func(main)(void)
     qmi_hw->m[0].timing = 0x40000202;
     set_sys_clock_khz(210000, true);
 
+    stdio_init_all();
+    debug_trace("YAMA boot USB_DEBUG=%u", (unsigned)YAMANOOTO_USB_STDIO_DEBUG);
+
     setup_gpio();
 
     // Configuration record: name(50) + type(1) + size(4) + offset(4).
     // The FM-PAC BIOS is always appended after the ROM image by the tool.
     memcpy(&active_rom_size, rom + ROM_NAME_MAX + 1, sizeof(uint32_t));
+    debug_trace("YAMA config active_rom_size=%lu", (unsigned long)active_rom_size);
 
     yamanooto_run_fmpac();  // expanded slot: game (sub-slot 0) + FM-PAC BIOS (sub-slot 3)
     return 0;

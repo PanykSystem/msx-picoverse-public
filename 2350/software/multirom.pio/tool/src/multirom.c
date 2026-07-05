@@ -211,8 +211,13 @@ uint8_t detect_rom_type(const char *filename, uint32_t size) {
         return 0; // unknown mapper
     }
 
-    fread(rom, 1, read_size, file);
+    size_t read_bytes = fread(rom, 1, read_size, file);
     fclose(file);
+    if (read_bytes != read_size) {
+        printf("Failed to read ROM data from %s\n", filename);
+        free(rom);
+        return 0; // unknown mapper
+    }
 
     // SHA1 database lookup (openMSX softwaredb) — checked before heuristics.
     {

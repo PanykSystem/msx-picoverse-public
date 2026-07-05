@@ -1,5 +1,10 @@
 # Change Log
 
+## PicoVerse 2040 Multirom v2.62
+
+- Fixed the PC tool mapper-detection read path to reject truncated ROM reads before hashing or scanning the allocated ROM buffer.
+- Version bumped to v2.62 (top-level and tool Makefiles).
+
 ## PicoVerse 2040 Multirom v2.61
 
 - Bumped the multirom.pio version to v2.61.

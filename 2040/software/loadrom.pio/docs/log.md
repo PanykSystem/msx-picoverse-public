@@ -1,5 +1,10 @@
 # Change Log
 
+## PicoVerse 2040 Loadrom v2.61
+
+- Fixed the PC tool mapper-detection read path to reject truncated ROM reads before hashing or scanning the allocated ROM buffer.
+- Version bumped to v2.61 (top-level and tool Makefiles).
+
 ## PicoVerse 2040 Loadrom v2.60
 
 - Refreshed the generated ROM mapper SHA1 database from the current openMSX `softwaredb.xml` and updated the generator to parse the new attribute-based XML format.

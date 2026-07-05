@@ -29,7 +29,7 @@
 #include "fmpac_bios.h"
 
 #ifndef APP_VERSION
-#define APP_VERSION "v1.13"
+#define APP_VERSION "v1.15"
 #endif
 
 #define UF2FILENAME               "yamanooto.uf2"        // default UF2 output file

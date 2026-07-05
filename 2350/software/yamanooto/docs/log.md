@@ -1,3 +1,20 @@
+# PicoVerse 2350 Yamanooto v1.15
+
+- Added Explorer-style USB CDC stdio debug support for Yamanooto and trace points for boot, subslot selection, Yamanooto registers, SCC raw-bank/mode activation, SCC register writes, FM writes, and audio engine switching.
+- Added `utils/capture-yamanooto-debug.ps1` to capture the USB CDC trace into timestamped log files for SCC/FMPAC diagnosis.
+- Fixed SCC audio gating found from USB CDC logs: SCC rendering now latches after SCC register writes and is no longer disabled when the game pages bank 2 away from `0x3F` after the write; FM writes still take ownership for FM-PAC games.
+- Disabled USB CDC stdio debug for the production build while keeping the compile-time debug switch and capture helper available for future diagnostics.
+- Version bumped to v1.15 (top-level and tool Makefiles). Firmware and tool verified building.
+
+# PicoVerse 2350 Yamanooto v1.14
+
+- Fixed SCC/SCC+ playback selection in Yamanooto images with always-on FM-PAC by switching the audio engine from recent SCC register writes instead of letting an idle/keyed OPLL keep priority.
+- Matched SCC/SCC+ register read/write routing to Yamanooto raw-bank visibility rules, including mirrored SCC register windows before offset-adjusted flash bank mapping.
+- Kept SCC rendering active whenever Yamanooto's raw SCC/SCC+ enable state is active, matching Explorer's SCC mapper behaviour instead of timing out on quiet/sustained SCC passages.
+- Added an explicit volatile SCC render request from the mapper write path so core 1 renders SCC as soon as core 0 enables or writes the SCC chip.
+- Moved SCC/SCC+ enable and mode handling into the Yamanooto mapper layer, matching openMSX: the ROM offset only affects flash bank selection, while raw banks plus the SCC mode register decide the SCC window and `emu2212` receives mirrored SCC register bytes; CFGR changes also resync SCC render state immediately.
+- Version bumped to v1.14 (top-level and tool Makefiles). Firmware and tool verified building.
+
 # PicoVerse 2350 Yamanooto v1.13
 
 - Removed the software PSG DC blocker to fix PSG noise under SCC (matches Explorer's clean SCC + PSG).
@@ -20,7 +37,8 @@
 - Added `docs/msx-picoverse-2350-yamanooto.md` (implementation guide) and
   `docs/msx-picoverse-2350-yamanooto-tool-manual.en-us.md` (PC tool manual).
 - Updated `docs/msx-picoverse-public-readme.md` (highlights, 2350 section, documentation links,
-  Yamanooto tool manual link, and credits for the Genami Yamanooto / openMSX Yamanooto.cc references)
+  Yamanooto tool manual link, and credits for the Genami Yamanooto / openMSX Yamanooto.cc references),
+  `docs/msx-picoverse-2350-features.md` (Yamanooto flash-cartridge emulation feature entry),
   and `docs/presentation/msx-cartridge-comparison.md` (Yamanooto listed as a PicoVerse 2350 exclusive).
 
 # PicoVerse 2350 Yamanooto v1.10

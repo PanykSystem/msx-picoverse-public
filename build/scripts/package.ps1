@@ -318,7 +318,7 @@ function Get-LatestChangeLogEntry {
     $lines = Get-Content -LiteralPath $Path
     $headingIndex = -1
     for ($index = 0; $index -lt $lines.Count; $index++) {
-        if ($lines[$index] -match '^##\s+(.+?)\s*$') {
+        if ($lines[$index] -match '^#{1,2}\s+(.+?)\s*$') {
             $headingIndex = $index
             break
         }
@@ -332,7 +332,7 @@ function Get-LatestChangeLogEntry {
     $body = [System.Collections.Generic.List[string]]::new()
     for ($index = $headingIndex + 1; $index -lt $lines.Count; $index++) {
         $line = $lines[$index]
-        if ($line -match '^##\s+') {
+        if ($line -match '^#{1,2}\s+') {
             break
         }
         if ($line -match '^\s*-\s*$') {
@@ -364,7 +364,8 @@ function Get-ReleaseChangeLogEntries {
         "2040\software\multirom.pio\docs\log.md",
         "2350\software\loadrom.pio\docs\log.md",
         "2350\software\multirom.pio\docs\log.md",
-        "2350\software\explorer.pio\docs\log.md"
+        "2350\software\explorer.pio\docs\log.md",
+        "2350\software\yamanooto\docs\log.md"
     )
 
     $entries = [System.Collections.Generic.List[object]]::new()

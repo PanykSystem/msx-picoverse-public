@@ -40,6 +40,11 @@ project(yamanooto C CXX ASM)
 # Initialise the Raspberry Pi Pico SDK
 pico_sdk_init()
 
+# Set to 1 to enable USB CDC stdio debug output, matching the Explorer debug
+# build style. The cartridge appears as a USB serial device and debug_trace()
+# output is sent over USB.
+set(YAMANOOTO_USB_STDIO_DEBUG 0)
+
 # Add executable. Default name is the project name, version 0.1
 add_executable(yamanooto
     yamanooto.c
@@ -55,7 +60,7 @@ pico_set_program_version(yamanooto "0.1")
 
 # Modify the below lines to enable/disable output over UART/USB
 pico_enable_stdio_uart(yamanooto 0)
-pico_enable_stdio_usb(yamanooto 0)
+pico_enable_stdio_usb(yamanooto ${YAMANOOTO_USB_STDIO_DEBUG})
 
 # Add the standard library to the build
 target_link_libraries(yamanooto
@@ -67,6 +72,12 @@ target_link_libraries(yamanooto
 
 target_compile_definitions(yamanooto PRIVATE
     PICO_AUDIO_I2S_PIO=0
+    YAMANOOTO_USB_STDIO_DEBUG=$<BOOL:${YAMANOOTO_USB_STDIO_DEBUG}>
+    PICO_STDIO_USB_CONNECT_WAIT_TIMEOUT_MS=5000
+    PICO_STDIO_USB_ENABLE_RESET_VIA_VENDOR_INTERFACE=0
+    PICO_STDIO_USB_STDOUT_TIMEOUT_US=10000
+    USBD_PID=0x00E2
+    USBD_PRODUCT="PicoVerse Yamanooto USB Debug CDC"
 )
 
 # Add the standard include files to the build

@@ -1,5 +1,10 @@
 # Change Log
 
+## PicoVerse 2350 Loadrom v2.66
+
+- Fixed the PC tool mapper-detection read path to reject truncated ROM reads before hashing or scanning the allocated ROM buffer.
+- Version bumped to v2.66 (top-level and tool Makefiles).
+
 ## PicoVerse 2350 Loadrom v2.65
 
 - Bumped the loadrom build version to v2.65.

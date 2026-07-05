@@ -391,6 +391,39 @@ SCC_read (SCC *scc, uint32_t adr) {
     return 0;
 }
 
+uint32_t
+SCC_readMem (SCC *scc, uint32_t adr) {
+    switch (scc->type) {
+    case SCC_STANDARD:
+        return read_standard (scc, adr);
+    case SCC_ENHANCED:
+        return scc->mode ? read_enhanced (scc, adr) : read_standard (scc, adr);
+    default:
+        break;
+    }
+
+    return 0;
+}
+
+void
+SCC_writeMem (SCC *scc, uint32_t adr, uint32_t val) {
+    val = val & 0xFF;
+
+    switch (scc->type) {
+    case SCC_STANDARD:
+        write_standard (scc, adr, val);
+        break;
+    case SCC_ENHANCED:
+        if (scc->mode)
+            write_enhanced (scc, adr, val);
+        else
+            write_standard (scc, adr, val);
+        break;
+    default:
+        break;
+    }
+}
+
 void SCC_write (SCC *scc, uint32_t adr, uint32_t val) {
     val = val & 0xFF;
 
