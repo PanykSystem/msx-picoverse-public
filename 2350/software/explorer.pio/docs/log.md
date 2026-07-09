@@ -3,6 +3,8 @@
 ## PicoVerse 2350 Explorer v2.39
 
 - Bumped Explorer version to v2.39.
+- Added a dedicated PicoVerse 2350 microSD build guide covering large-card partitioning, Nextor 4GB-per-partition limits, Explorer partition cycling with `P`, and the planned Nextor starter-files download link.
+- Expanded the PicoVerse 2350 microSD guide with step-by-step Windows partitioning procedures for both DiskPart (CLI) and Disk Management (GUI).
 - Added Explorer `-r`/`--megaram` to create a standalone `Brazilian MegaRAM (1MB)` SYSTEM entry without Nextor or the 1MB MSX memory mapper, allowing the MSX to boot to BIOS while the Cartucho II-compatible MegaRAM surface remains available.
 - Updated the Explorer MSX menu titles for the Nextor + Mapper + MegaRAM entries to say `1MB MegaRAM`.
 - Added MegaRAM-only `MegaRAM SCC` and `MegaRAM SCC+` audio profiles that keep the MegaRAM surface in-place while intercepting SCC register accesses and routing SCC audio to the Pico DAC.
