@@ -1,5 +1,16 @@
 # Change Log
 
+## PicoVerse 2350 Explorer v2.40
+
+- Bumped Explorer version to v2.40.
+- Updated the public README Softwaredb attribution to mention that the latest database updates are based on Vampier's work and to add the romdb.vampier.net reference link.
+- Added a per-ROM VDP `Frequency` option (Default / 60Hz / 50Hz) to the ROM detail screen for every launchable ROM entry, selectable with LEFT/RIGHT.
+- Persisted the frequency selection in each ROM's `.PVC` options file as a new byte 9 (options file grows from 9 to 10 bytes; older 9-byte files still load and default the frequency to `Default`). The MSX menu saves it through query-buffer byte 7 and reads it back through the new `CTRL_VDP_FREQ` (0xBFA0) register served by the Pico.
+- Applied the selected frequency after the launch reset by having the Pico patch the launched game's cartridge INIT: an 11-byte stub injected into the cached ROM header writes VDP register 9 directly through port 0x99 (bit 1 = 50/60Hz, other bits = the standard 192-line text default), then jumps to the game's original INIT. Because the stub runs as the cartridge INIT (after the BIOS boot re-initializes the VDP), the requested refresh mode is active when the game starts. The patch is applied only to regular game ROMs and is disabled for the Nextor/Sunrise/C2/MegaRAM system ROMs (which manage their own boot), fixing a boot loop when selecting 50/60Hz on those entries.
+- Hid the `Frequency` option in the ROM detail screen for system ROMs (Nextor/Sunrise/C2/MegaRAM), since the VDP frequency patch does not apply to them; the option is only shown for regular game ROMs.
+- Simplified the ROM detail footer to a single generic `[ESC - BACK] [LEFT/RIGHT - CHANGE]` hint (compact `[ESC-BACK] [L/R-CHANGE]` in 40-column mode), removing the per-option footer strings to recover MSX menu ROM space.
+- Added the `docs/msx-picoverse-2350-50-60hz.md` implementation document and a public README credit paragraph acknowledging the `50-60hz` project by sdsnatcher73 (Apache-2.0; with help from gdx, Grauw, and NYRIKKI) used as the VDP frequency reference.
+
 ## PicoVerse 2350 Explorer v2.39
 
 - Bumped Explorer version to v2.39.

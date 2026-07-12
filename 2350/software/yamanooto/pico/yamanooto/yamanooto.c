@@ -36,10 +36,8 @@
 // The ROM image is concatenated after the firmware binary. A 59-byte config
 // record (name + type + size + offset) precedes the raw image.
 //
-// NOTE: On-cartridge flash *programming* (ENAR WREN + AmdFlash command
-// sequences) is intentionally not emulated. The firmware runs a pre-flashed
-// image, which is the common use case; write cycles with WREN asserted are
-// ignored so they never corrupt the emulated banks.
+// ENAR WREN enables the S29GL064-compatible command interface. Its mutable
+// image is held in PSRAM and changed pages are journaled in unused board flash.
 //
 // This work is licensed under a "Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International
 // License". https://creativecommons.org/licenses/by-nc-sa/4.0/
@@ -51,10 +49,13 @@
 #include "pico/multicore.h"
 #include "hardware/clocks.h"
 #include "hardware/dma.h"
+#include "hardware/flash.h"
 #include "hardware/pio.h"
 #include "hardware/sync.h"
 #include "hardware/regs/qmi.h"
 #include "hardware/structs/qmi.h"
+#include "pico/flash.h"
+#include "hardware/structs/xip_ctrl.h"
 #include "pico/audio_i2s.h"
 #include "yamanooto.h"
 #include "emu2212.h"
@@ -111,6 +112,67 @@ static void debug_trace(const char *fmt, ...)
 // -----------------------------------------------------------------------
 static uint32_t active_rom_size = 0;         // ROM image size in bytes
 static const uint8_t *rom_base = NULL;       // Start of the raw ROM image in flash
+
+// The board's PSRAM holds the mutable S29GL064 image. A compact journal in
+// the unused upper 4 MB of the board's 16 MB flash makes programmed pages and
+// erased sectors survive power cycles without modifying the XIP firmware/ROM.
+#define YAMA_FLASH_SIZE             (8u * 1024u * 1024u)
+#define YAMA_PSRAM_BASE             0x11000000u
+#define YAMA_SAVE_STORAGE_SIZE      (4u * 1024u * 1024u)
+#define YAMA_SAVE_STORAGE_OFFSET    (PICO_FLASH_SIZE_BYTES - YAMA_SAVE_STORAGE_SIZE)
+#define YAMA_SAVE_RECORD_SIZE       512u
+#define YAMA_SAVE_PAGE_SIZE         256u
+#define YAMA_FLASH_PAGE_COUNT       (YAMA_FLASH_SIZE / YAMA_SAVE_PAGE_SIZE)
+#define YAMA_FLASH_DIRTY_BYTES      (YAMA_FLASH_PAGE_COUNT / 8u)
+#define YAMA_SAVE_MAGIC             0x53414D59u  // "YMAS"
+#define YAMA_SAVE_TYPE_PAGE         1u
+#define YAMA_SAVE_TYPE_ERASE        2u
+#define YAMA_SAVE_TYPE_CHIP_ERASE   3u
+#define YAMA_FLASH_BUFFER_SIZE      32u
+
+typedef enum {
+    YAMA_FLASH_READ,
+    YAMA_FLASH_UNLOCK_2,
+    YAMA_FLASH_COMMAND,
+    YAMA_FLASH_PROGRAM,
+    YAMA_FLASH_ERASE_UNLOCK_1,
+    YAMA_FLASH_ERASE_UNLOCK_2,
+    YAMA_FLASH_ERASE_COMMAND,
+    YAMA_FLASH_AUTOSELECT,
+    YAMA_FLASH_CFI,
+    YAMA_FLASH_BUFFER_COUNT,
+    YAMA_FLASH_BUFFER_DATA,
+    YAMA_FLASH_BUFFER_CONFIRM,
+} yama_flash_state_t;
+
+typedef struct __attribute__((packed)) {
+    uint32_t magic;
+    uint32_t rom_signature;
+    uint32_t address;
+    uint8_t type;
+    uint8_t reserved[3];
+} yama_save_record_header_t;
+
+typedef struct {
+    uint32_t offset;
+    const uint8_t *data;
+    size_t length;
+    bool erase;
+} yama_flash_storage_op_t;
+
+static uint8_t *flash_image = NULL;
+static uint8_t flash_dirty_pages[YAMA_FLASH_DIRTY_BYTES];
+static yama_flash_state_t flash_state = YAMA_FLASH_READ;
+static uint32_t flash_rom_signature = 0;
+static uint32_t save_record_cursor = 0;
+static uint32_t flash_buffer_sector = 0;
+static uint32_t flash_buffer_page = 0;
+static uint8_t flash_buffer_count = 0;
+static uint8_t flash_buffer_index = 0;
+static uint8_t flash_buffer[YAMA_FLASH_BUFFER_SIZE];
+
+static inline void __not_in_flash_func(yama_flash_page_set_dirty)(uint32_t page);
+static void __not_in_flash_func(yama_flash_mark_dirty_range)(uint32_t address, uint32_t size);
 
 // -----------------------------------------------------------------------
 // SCC + dual PSG + MSX-MUSIC emulation state and I2S audio
@@ -175,6 +237,252 @@ static inline void setup_gpio(void)
     gpio_init(PIN_SLTSL);   gpio_set_dir(PIN_SLTSL, GPIO_IN);
     gpio_init(PIN_BUSSDIR); gpio_set_dir(PIN_BUSSDIR, GPIO_IN);
     gpio_init(PIN_PSRAM);   gpio_set_dir(PIN_PSRAM, GPIO_IN);
+}
+
+// -----------------------------------------------------------------------
+// External PSRAM and persistent flash journal
+// -----------------------------------------------------------------------
+static inline void __not_in_flash_func(psram_delay_cycles)(uint32_t cycles)
+{
+    for (volatile uint32_t cycle = 0; cycle < cycles; ++cycle)
+        __asm volatile ("nop");
+}
+
+static inline void __not_in_flash_func(psram_wait_direct_done)(void)
+{
+    while ((qmi_hw->direct_csr & QMI_DIRECT_CSR_TXEMPTY_BITS) == 0) { }
+    while ((qmi_hw->direct_csr & QMI_DIRECT_CSR_BUSY_BITS) != 0) { }
+}
+
+static inline void __not_in_flash_func(psram_send_direct_cmd)(uint8_t cmd, bool quad_width)
+{
+    qmi_hw->direct_csr |= QMI_DIRECT_CSR_ASSERT_CS1N_BITS;
+    qmi_hw->direct_tx = quad_width
+        ? QMI_DIRECT_TX_OE_BITS | (QMI_DIRECT_TX_IWIDTH_VALUE_Q << QMI_DIRECT_TX_IWIDTH_LSB) | cmd
+        : cmd;
+    psram_wait_direct_done();
+    qmi_hw->direct_csr &= ~QMI_DIRECT_CSR_ASSERT_CS1N_BITS;
+    (void)qmi_hw->direct_rx;
+}
+
+static bool __no_inline_not_in_flash_func(psram_init)(void)
+{
+    gpio_set_function(PIN_PSRAM, GPIO_FUNC_XIP_CS1);
+    uint32_t irq_state = save_and_disable_interrupts();
+    qmi_hw->direct_csr = (30u << QMI_DIRECT_CSR_CLKDIV_LSB) | QMI_DIRECT_CSR_EN_BITS;
+    while ((qmi_hw->direct_csr & QMI_DIRECT_CSR_BUSY_BITS) != 0) { }
+    psram_send_direct_cmd(0xF5u, true);
+    psram_delay_cycles(128u);
+    psram_send_direct_cmd(0x66u, false);
+    psram_delay_cycles(128u);
+    psram_send_direct_cmd(0x99u, false);
+    psram_delay_cycles(50000u);
+    psram_send_direct_cmd(0x35u, false);
+    psram_delay_cycles(128u);
+    qmi_hw->direct_csr &= ~(QMI_DIRECT_CSR_ASSERT_CS1N_BITS | QMI_DIRECT_CSR_EN_BITS);
+    qmi_hw->m[1].timing =
+        (QMI_M0_TIMING_PAGEBREAK_VALUE_1024 << QMI_M0_TIMING_PAGEBREAK_LSB) |
+        (1u << QMI_M0_TIMING_SELECT_HOLD_LSB) |
+        (1u << QMI_M0_TIMING_COOLDOWN_LSB) |
+        (2u << QMI_M0_TIMING_RXDELAY_LSB) |
+        (26u << QMI_M0_TIMING_MAX_SELECT_LSB) |
+        (5u << QMI_M0_TIMING_MIN_DESELECT_LSB) |
+        (2u << QMI_M0_TIMING_CLKDIV_LSB);
+    qmi_hw->m[1].rfmt =
+        (QMI_M0_RFMT_PREFIX_WIDTH_VALUE_Q << QMI_M0_RFMT_PREFIX_WIDTH_LSB) |
+        (QMI_M0_RFMT_ADDR_WIDTH_VALUE_Q << QMI_M0_RFMT_ADDR_WIDTH_LSB) |
+        (QMI_M0_RFMT_SUFFIX_WIDTH_VALUE_Q << QMI_M0_RFMT_SUFFIX_WIDTH_LSB) |
+        (QMI_M0_RFMT_DUMMY_WIDTH_VALUE_Q << QMI_M0_RFMT_DUMMY_WIDTH_LSB) |
+        (QMI_M0_RFMT_DUMMY_LEN_VALUE_24 << QMI_M0_RFMT_DUMMY_LEN_LSB) |
+        (QMI_M0_RFMT_DATA_WIDTH_VALUE_Q << QMI_M0_RFMT_DATA_WIDTH_LSB) |
+        (QMI_M0_RFMT_PREFIX_LEN_VALUE_8 << QMI_M0_RFMT_PREFIX_LEN_LSB) |
+        (QMI_M0_RFMT_SUFFIX_LEN_VALUE_NONE << QMI_M0_RFMT_SUFFIX_LEN_LSB);
+    qmi_hw->m[1].rcmd = (0xEBu << QMI_M0_RCMD_PREFIX_LSB);
+    qmi_hw->m[1].wfmt =
+        (QMI_M0_WFMT_PREFIX_WIDTH_VALUE_Q << QMI_M0_WFMT_PREFIX_WIDTH_LSB) |
+        (QMI_M0_WFMT_ADDR_WIDTH_VALUE_Q << QMI_M0_WFMT_ADDR_WIDTH_LSB) |
+        (QMI_M0_WFMT_SUFFIX_WIDTH_VALUE_Q << QMI_M0_WFMT_SUFFIX_WIDTH_LSB) |
+        (QMI_M0_WFMT_DUMMY_WIDTH_VALUE_Q << QMI_M0_WFMT_DUMMY_WIDTH_LSB) |
+        (QMI_M0_WFMT_PREFIX_LEN_VALUE_8 << QMI_M0_WFMT_PREFIX_LEN_LSB) |
+        (QMI_M0_WFMT_SUFFIX_LEN_VALUE_NONE << QMI_M0_WFMT_SUFFIX_LEN_LSB);
+    qmi_hw->m[1].wcmd = (0x38u << QMI_M0_WCMD_PREFIX_LSB);
+    xip_ctrl_hw->ctrl |= XIP_CTRL_WRITABLE_M1_BITS;
+    restore_interrupts(irq_state);
+    volatile uint32_t *test = (volatile uint32_t *)0x15000000u;
+    test[0] = 0x12345678u;
+    return test[0] == 0x12345678u;
+}
+
+static void __no_inline_not_in_flash_func(yama_flash_storage_callback)(void *param)
+{
+    const yama_flash_storage_op_t *op = (const yama_flash_storage_op_t *)param;
+    if (op->erase)
+        flash_range_erase(op->offset, op->length);
+    else
+        flash_range_program(op->offset, op->data, op->length);
+}
+
+static bool yama_flash_storage_execute(yama_flash_storage_op_t *op, uint32_t timeout_ms)
+{
+    return flash_safe_execute(yama_flash_storage_callback, op, timeout_ms) == PICO_OK;
+}
+
+static uint32_t yama_rom_signature(void)
+{
+    uint32_t hash = 2166136261u;
+    for (uint32_t index = 0; index < active_rom_size; ++index)
+        hash = (hash ^ rom_base[index]) * 16777619u;
+    return hash ^ active_rom_size;
+}
+
+static bool yama_save_write_record(uint8_t type, uint32_t address)
+{
+    static uint8_t record[YAMA_SAVE_RECORD_SIZE];
+    memset(record, 0xFF, sizeof(record));
+    yama_save_record_header_t header = {
+        .magic = YAMA_SAVE_MAGIC,
+        .rom_signature = flash_rom_signature,
+        .address = address,
+        .type = type,
+    };
+    memcpy(record, &header, sizeof(header));
+    if (type == YAMA_SAVE_TYPE_PAGE)
+        memcpy(record + YAMA_SAVE_PAGE_SIZE, flash_image + address, YAMA_SAVE_PAGE_SIZE);
+
+    yama_flash_storage_op_t op = {
+        .offset = YAMA_SAVE_STORAGE_OFFSET + save_record_cursor * YAMA_SAVE_RECORD_SIZE,
+        .data = record,
+        .length = sizeof(record),
+        .erase = false,
+    };
+    if (!yama_flash_storage_execute(&op, 1000u))
+        return false;
+    ++save_record_cursor;
+    return true;
+}
+
+static bool yama_flash_page_differs_from_initial(uint32_t page)
+{
+    if ((flash_dirty_pages[page / YAMA_SAVE_PAGE_SIZE / 8u] &
+         (1u << ((page / YAMA_SAVE_PAGE_SIZE) & 7u))) == 0u)
+        return false;
+
+    for (uint32_t index = 0; index < YAMA_SAVE_PAGE_SIZE; ++index)
+    {
+        uint32_t address = page + index;
+        uint8_t initial = address < active_rom_size ? rom_base[address] : 0xFFu;
+        if (flash_image[address] != initial)
+            return true;
+    }
+    return false;
+}
+
+static bool yama_save_compact(void)
+{
+    const uint32_t record_count = YAMA_SAVE_STORAGE_SIZE / YAMA_SAVE_RECORD_SIZE;
+    uint32_t changed_pages = 0;
+    for (uint32_t page = 0; page < YAMA_FLASH_SIZE; page += YAMA_SAVE_PAGE_SIZE)
+    {
+        if (yama_flash_page_differs_from_initial(page) && ++changed_pages > record_count)
+            return false;
+    }
+
+    yama_flash_storage_op_t erase = {
+        .offset = YAMA_SAVE_STORAGE_OFFSET,
+        .data = NULL,
+        .length = YAMA_SAVE_STORAGE_SIZE,
+        .erase = true,
+    };
+    if (!yama_flash_storage_execute(&erase, 10000u))
+        return false;
+
+    save_record_cursor = 0;
+    for (uint32_t page = 0; page < YAMA_FLASH_SIZE; page += YAMA_SAVE_PAGE_SIZE)
+    {
+        if (yama_flash_page_differs_from_initial(page) &&
+            !yama_save_write_record(YAMA_SAVE_TYPE_PAGE, page))
+            return false;
+    }
+    return true;
+}
+
+static bool yama_save_append(uint8_t type, uint32_t address)
+{
+    const uint32_t record_count = YAMA_SAVE_STORAGE_SIZE / YAMA_SAVE_RECORD_SIZE;
+    if (save_record_cursor >= record_count && !yama_save_compact())
+        return false;
+    return yama_save_write_record(type, address);
+}
+
+static uint32_t yama_flash_sector_start(uint32_t address)
+{
+    return address < 0x10000u ? address & ~0x1FFFu : address & ~0xFFFFu;
+}
+
+static uint32_t yama_flash_sector_size(uint32_t address)
+{
+    return address < 0x10000u ? 0x2000u : 0x10000u;
+}
+
+static void yama_save_restore(void)
+{
+    const uint32_t record_count = YAMA_SAVE_STORAGE_SIZE / YAMA_SAVE_RECORD_SIZE;
+    const uint8_t *storage = (const uint8_t *)(XIP_BASE + YAMA_SAVE_STORAGE_OFFSET);
+    bool has_foreign_records = false;
+    save_record_cursor = 0;
+    for (; save_record_cursor < record_count; ++save_record_cursor)
+    {
+        const yama_save_record_header_t *header = (const yama_save_record_header_t *)(storage + save_record_cursor * YAMA_SAVE_RECORD_SIZE);
+        if (header->magic == 0xFFFFFFFFu)
+            break;
+        if (header->magic != YAMA_SAVE_MAGIC || header->rom_signature != flash_rom_signature)
+        {
+            has_foreign_records = true;
+            break;
+        }
+        if (header->address >= YAMA_FLASH_SIZE)
+            continue;
+        if (header->type == YAMA_SAVE_TYPE_ERASE)
+        {
+            memset(flash_image + yama_flash_sector_start(header->address), 0xFF,
+                   yama_flash_sector_size(header->address));
+            yama_flash_mark_dirty_range(yama_flash_sector_start(header->address),
+                                        yama_flash_sector_size(header->address));
+        }
+        else if (header->type == YAMA_SAVE_TYPE_CHIP_ERASE)
+        {
+            memset(flash_image, 0xFF, YAMA_FLASH_SIZE);
+            memset(flash_dirty_pages, 0xFF, sizeof(flash_dirty_pages));
+        }
+        else if (header->type == YAMA_SAVE_TYPE_PAGE && header->address <= YAMA_FLASH_SIZE - YAMA_SAVE_PAGE_SIZE)
+        {
+            memcpy(flash_image + header->address, storage + save_record_cursor * YAMA_SAVE_RECORD_SIZE + YAMA_SAVE_PAGE_SIZE,
+                   YAMA_SAVE_PAGE_SIZE);
+            yama_flash_page_set_dirty(header->address / YAMA_SAVE_PAGE_SIZE);
+        }
+    }
+    if (has_foreign_records)
+    {
+        yama_flash_storage_op_t op = {
+            .offset = YAMA_SAVE_STORAGE_OFFSET,
+            .data = NULL,
+            .length = YAMA_SAVE_STORAGE_SIZE,
+            .erase = true,
+        };
+        if (yama_flash_storage_execute(&op, 10000u))
+            save_record_cursor = 0;
+    }
+}
+
+static bool yama_flash_init(void)
+{
+    if (!psram_init())
+        return false;
+    flash_image = (uint8_t *)YAMA_PSRAM_BASE;
+    memset(flash_dirty_pages, 0, sizeof(flash_dirty_pages));
+    flash_rom_signature = yama_rom_signature();
+    yama_save_restore();
+    return true;
 }
 
 // -----------------------------------------------------------------------
@@ -352,11 +660,266 @@ static inline uint32_t __not_in_flash_func(yama_flash_addr)(uint16_t address)
     return (bank << 13) | (uint32_t)(address & 0x1FFFu);
 }
 
+static inline bool __not_in_flash_func(yama_flash_page_is_dirty)(uint32_t page)
+{
+    return (flash_dirty_pages[page / 8u] & (1u << (page & 7u))) != 0u;
+}
+
+static inline void __not_in_flash_func(yama_flash_page_set_dirty)(uint32_t page)
+{
+    flash_dirty_pages[page / 8u] |= (uint8_t)(1u << (page & 7u));
+}
+
+static void __not_in_flash_func(yama_flash_materialize_page)(uint32_t faddr)
+{
+    uint32_t page_address = faddr & ~(YAMA_SAVE_PAGE_SIZE - 1u);
+    uint32_t page = page_address / YAMA_SAVE_PAGE_SIZE;
+    if (yama_flash_page_is_dirty(page))
+        return;
+
+    uint32_t available = page_address < active_rom_size ? active_rom_size - page_address : 0u;
+    uint32_t copy_size = available < YAMA_SAVE_PAGE_SIZE ? available : YAMA_SAVE_PAGE_SIZE;
+    if (copy_size != 0u)
+        memcpy(flash_image + page_address, rom_base + page_address, copy_size);
+    if (copy_size < YAMA_SAVE_PAGE_SIZE)
+        memset(flash_image + page_address + copy_size, 0xFFu, YAMA_SAVE_PAGE_SIZE - copy_size);
+    yama_flash_page_set_dirty(page);
+}
+
+static void __not_in_flash_func(yama_flash_mark_dirty_range)(uint32_t address, uint32_t size)
+{
+    uint32_t first_page = address / YAMA_SAVE_PAGE_SIZE;
+    uint32_t last_page = (address + size - 1u) / YAMA_SAVE_PAGE_SIZE;
+    for (uint32_t page = first_page; page <= last_page; ++page)
+        yama_flash_page_set_dirty(page);
+}
+
 static inline uint8_t __not_in_flash_func(yama_read_flash)(uint32_t faddr)
 {
-    if (faddr < active_rom_size)
-        return rom_base[faddr];
-    return 0xFFu;  // unprogrammed flash reads back as 0xFF
+    if (flash_state == YAMA_FLASH_AUTOSELECT)
+    {
+        switch (faddr)
+        {
+            case 0x0000u: return 0x01u;  // AMD manufacturer ID
+            case 0x0001u: return 0x00u;
+            case 0x0002u: return 0x7Eu;  // x16 device-ID prefix
+            case 0x0003u: return 0x22u;
+            case 0x0004u: return 0x00u;  // sector-protection state: unprotected
+            case 0x0005u: return 0x00u;
+            case 0x0006u: return 0x0Au;  // extended ID 0xFF0A
+            case 0x0007u: return 0xFFu;
+            case 0x001Cu: return 0x10u;  // device ID byte 0
+            case 0x001Du: return 0x22u;
+            case 0x001Eu: return 0x00u;  // device ID byte 1
+            case 0x001Fu: return 0x22u;
+            default: return 0xFFu;
+        }
+    }
+    if (flash_state == YAMA_FLASH_CFI)
+    {
+        // The chip is x16. CFI addresses are native-word addresses, so an
+        // MSX byte address selects the low or high byte of that word.
+        uint32_t cfi_address = faddr >> 1;
+        uint8_t value = 0xFFu;
+        switch (cfi_address)
+        {
+            case 0x10u: value = 'Q'; break;
+            case 0x11u: value = 'R'; break;
+            case 0x12u: value = 'Y'; break;
+            case 0x13u: value = 0x02u; break;
+            case 0x15u: value = 0x40u; break;
+            case 0x1Bu: value = 0x27u; break;
+            case 0x1Cu: value = 0x36u; break;
+            case 0x1Fu: value = 7u; break;
+            case 0x20u: value = 7u; break;
+            case 0x21u: value = 10u; break;
+            case 0x22u: value = 0u; break;
+            case 0x23u: value = 3u; break;
+            case 0x24u: value = 5u; break;
+            case 0x25u: value = 4u; break;
+            case 0x26u: value = 0u; break;
+            case 0x27u: value = 23u; break;
+            case 0x28u: value = 0x02u; break;
+            case 0x2Au: value = 5u; break;
+            case 0x2Cu: value = 2u; break;
+            case 0x2Du: value = 7u; break;
+            case 0x2Fu: value = 0x20u; break;
+            case 0x31u: value = 126u; break;
+            case 0x33u: value = 0x00u; break;
+            case 0x40u: value = 'P'; break;
+            case 0x41u: value = 'R'; break;
+            case 0x42u: value = 'I'; break;
+            case 0x43u: value = '1'; break;
+            case 0x44u: value = '3'; break;
+            case 0x45u: value = 0x20u; break;
+            case 0x46u: value = 2u; break;
+            case 0x47u: value = 1u; break;
+            case 0x49u: value = 8u; break;
+            case 0x4Cu: value = 2u; break;
+            case 0x4Du: value = 0xB5u; break;
+            case 0x4Eu: value = 0xC5u; break;
+            case 0x4Fu: value = 0x02u; break;
+            case 0x50u: value = 1u; break;
+            default: break;
+        }
+        return (faddr & 1u) ? 0x00u : value;
+    }
+    if (flash_image && yama_flash_page_is_dirty(faddr / YAMA_SAVE_PAGE_SIZE))
+        return flash_image[faddr];
+    return faddr < active_rom_size ? rom_base[faddr] : 0xFFu;
+}
+
+static inline bool __not_in_flash_func(yama_flash_unlock_1)(uint32_t faddr)
+{
+    // Pampas uses the S29GL064 x16 command addresses through the 8-bit mapper;
+    // accept the conventional x8 aliases as well for other Yamanooto software.
+    return faddr == 0x0AAAu || faddr == 0x0555u;
+}
+
+static inline bool __not_in_flash_func(yama_flash_unlock_2)(uint32_t faddr)
+{
+    return faddr == 0x0555u || faddr == 0x02AAu;
+}
+
+static void __not_in_flash_func(yama_flash_program)(uint32_t faddr, uint8_t data)
+{
+    if (!flash_image || faddr >= YAMA_FLASH_SIZE)
+        return;
+    yama_flash_materialize_page(faddr);
+    flash_image[faddr] &= data;  // NOR flash can only change 1 bits to 0.
+    (void)yama_save_append(YAMA_SAVE_TYPE_PAGE, faddr & ~(YAMA_SAVE_PAGE_SIZE - 1u));
+}
+
+static void __not_in_flash_func(yama_flash_erase_sector)(uint32_t faddr)
+{
+    if (!flash_image || faddr >= YAMA_FLASH_SIZE)
+        return;
+    uint32_t sector = yama_flash_sector_start(faddr);
+    memset(flash_image + sector, 0xFF, yama_flash_sector_size(faddr));
+    yama_flash_mark_dirty_range(sector, yama_flash_sector_size(faddr));
+    (void)yama_save_append(YAMA_SAVE_TYPE_ERASE, sector);
+}
+
+static void __not_in_flash_func(yama_flash_erase_chip)(void)
+{
+    if (!flash_image)
+        return;
+    memset(flash_image, 0xFF, YAMA_FLASH_SIZE);
+    memset(flash_dirty_pages, 0xFF, sizeof(flash_dirty_pages));
+    (void)yama_save_append(YAMA_SAVE_TYPE_CHIP_ERASE, 0u);
+}
+
+static void __not_in_flash_func(yama_flash_program_buffer)(void)
+{
+    if (!flash_image)
+        return;
+    for (uint8_t index = 0; index < flash_buffer_count; ++index)
+    {
+        yama_flash_materialize_page(flash_buffer_page + index);
+        flash_image[flash_buffer_page + index] &= flash_buffer[index];
+    }
+    (void)yama_save_append(YAMA_SAVE_TYPE_PAGE, flash_buffer_page & ~(YAMA_SAVE_PAGE_SIZE - 1u));
+}
+
+static void __not_in_flash_func(yama_flash_write)(uint32_t faddr, uint8_t data)
+{
+    if (data == 0xF0u)
+    {
+        flash_state = YAMA_FLASH_READ;
+        return;
+    }
+
+    switch (flash_state)
+    {
+        case YAMA_FLASH_READ:
+        case YAMA_FLASH_AUTOSELECT:
+            if (data == 0x98u && ((faddr >> 1) & 0x7FFu) == 0x55u)
+            {
+                flash_state = YAMA_FLASH_CFI;
+                break;
+            }
+            flash_state = (data == 0xAAu && yama_flash_unlock_1(faddr))
+                ? YAMA_FLASH_UNLOCK_2 : YAMA_FLASH_READ;
+            break;
+        case YAMA_FLASH_UNLOCK_2:
+            flash_state = (data == 0x55u && yama_flash_unlock_2(faddr))
+                ? YAMA_FLASH_COMMAND : YAMA_FLASH_READ;
+            break;
+        case YAMA_FLASH_COMMAND:
+            if (data == 0x25u)
+            {
+                flash_buffer_sector = yama_flash_sector_start(faddr);
+                flash_state = YAMA_FLASH_BUFFER_COUNT;
+                break;
+            }
+            if (!yama_flash_unlock_1(faddr))
+            {
+                flash_state = YAMA_FLASH_READ;
+                break;
+            }
+            if (data == 0xA0u) flash_state = YAMA_FLASH_PROGRAM;
+            else if (data == 0x80u) flash_state = YAMA_FLASH_ERASE_UNLOCK_1;
+            else if (data == 0x90u) flash_state = YAMA_FLASH_AUTOSELECT;
+            else flash_state = YAMA_FLASH_READ;
+            break;
+        case YAMA_FLASH_PROGRAM:
+            yama_flash_program(faddr, data);
+            flash_state = YAMA_FLASH_READ;
+            break;
+        case YAMA_FLASH_ERASE_UNLOCK_1:
+            flash_state = (data == 0xAAu && yama_flash_unlock_1(faddr))
+                ? YAMA_FLASH_ERASE_UNLOCK_2 : YAMA_FLASH_READ;
+            break;
+        case YAMA_FLASH_ERASE_UNLOCK_2:
+            flash_state = (data == 0x55u && yama_flash_unlock_2(faddr))
+                ? YAMA_FLASH_ERASE_COMMAND : YAMA_FLASH_READ;
+            break;
+        case YAMA_FLASH_ERASE_COMMAND:
+            if (data == 0x30u)
+                yama_flash_erase_sector(faddr);
+            else if (data == 0x10u)
+                yama_flash_erase_chip();
+            flash_state = YAMA_FLASH_READ;
+            break;
+        case YAMA_FLASH_CFI:
+            break;
+        case YAMA_FLASH_BUFFER_COUNT:
+            if (faddr < flash_buffer_sector || faddr >= flash_buffer_sector + yama_flash_sector_size(faddr) ||
+                data >= YAMA_FLASH_BUFFER_SIZE)
+            {
+                flash_state = YAMA_FLASH_READ;
+                break;
+            }
+            flash_buffer_count = (uint8_t)(data + 1u);
+            flash_buffer_index = 0;
+            memset(flash_buffer, 0xFF, sizeof(flash_buffer));
+            flash_state = YAMA_FLASH_BUFFER_DATA;
+            break;
+        case YAMA_FLASH_BUFFER_DATA:
+            if (faddr < flash_buffer_sector || faddr >= flash_buffer_sector + yama_flash_sector_size(faddr))
+            {
+                flash_state = YAMA_FLASH_READ;
+                break;
+            }
+            if (flash_buffer_index == 0u)
+                flash_buffer_page = faddr & ~(YAMA_FLASH_BUFFER_SIZE - 1u);
+            if ((faddr & ~(YAMA_FLASH_BUFFER_SIZE - 1u)) != flash_buffer_page)
+            {
+                flash_state = YAMA_FLASH_READ;
+                break;
+            }
+            flash_buffer[faddr & (YAMA_FLASH_BUFFER_SIZE - 1u)] = data;
+            ++flash_buffer_index;
+            if (flash_buffer_index == flash_buffer_count)
+                flash_state = YAMA_FLASH_BUFFER_CONFIRM;
+            break;
+        case YAMA_FLASH_BUFFER_CONFIRM:
+            if (data == 0x29u && faddr >= flash_buffer_sector &&
+                faddr < flash_buffer_sector + yama_flash_sector_size(faddr))
+                yama_flash_program_buffer();
+            flash_state = YAMA_FLASH_READ;
+            break;
+    }
 }
 
 static inline bool __not_in_flash_func(yama_scc_register_access)(uint16_t address)
@@ -531,9 +1094,12 @@ static inline void __not_in_flash_func(yama_mem_write)(uint16_t addr, uint8_t da
     uint16_t maddr = yama_mirror(addr);
     uint32_t page8kB = (uint32_t)(maddr >> 13) - 2u;
 
-    // Flash programming with WREN is not emulated: ignore to protect the banks.
     if (enableReg & YAMA_WREN)
+    {
+        if (!(configReg & YAMA_ROMDIS))
+            yama_flash_write(yama_flash_addr(maddr), data);
         return;
+    }
 
     uint32_t offset = yama_bank_offset();
 
@@ -872,6 +1438,7 @@ static inline struct audio_buffer *__not_in_flash_func(take_audio_buffer_servici
 
 static void __no_inline_not_in_flash_func(core1_yamanooto_audio)(void)
 {
+    flash_safe_execute_core_init();
     msx_music_reset_filters();
 
     // On-the-fly engine selection. SCC and FM are never driven together by one
@@ -1187,6 +1754,11 @@ static void __no_inline_not_in_flash_func(yamanooto_run_fmpac)(void)
     gpio_init(PIN_WAIT);
     gpio_set_dir(PIN_WAIT, GPIO_OUT);
     gpio_put(PIN_WAIT, 0);
+
+    // The bootstrap responder must be ready immediately after power-up. Delay
+    // the PSRAM bring-up and ROM copy until its forced restart is held on WAIT.
+    if (!yama_flash_init())
+        debug_trace("YAMA PSRAM unavailable; flash save support disabled");
 
     static fmpac_state_t fmpac;
     memset(&fmpac, 0, sizeof(fmpac));

@@ -68,6 +68,7 @@ target_link_libraries(yamanooto
     pico_multicore
     pico_audio_i2s
     hardware_dma
+    hardware_flash
     hardware_pio)
 
 target_compile_definitions(yamanooto PRIVATE

@@ -75,7 +75,7 @@ mirrored** and are only visible for reads while the register interface is enable
 | Bit | Name | Meaning |
 |---|---|---|
 | `0x01` | `REGEN` | Register interface enable (registers become readable). |
-| `0x10` | `WREN` | Flash write enable (flash programming — see limitations). |
+| `0x10` | `WREN` | Enable the S29GL064N-compatible flash command interface. |
 
 **`CFGR` (0x7FFD)**
 
@@ -225,10 +225,13 @@ the ROM image (`rom + record + rom_size`).
 
 ## Limitations
 
-- **Flash programming is not emulated.** On-cartridge flash writes with `ENAR` `WREN` (the Yamanooto
-  self-flashing/AmdFlash command sequences) are ignored so they cannot corrupt the emulated banks.
-  The firmware runs a pre-flashed image built by the PC tool; it is not a substitute for the physical
-  Yamanooto's on-MSX flashing utility.
+- **Game saves use the emulated flash.** `ENAR` `WREN` implements the Yamanooto S29GL064N command
+  interface used by save-capable software: AMD single-byte programming, 32-byte write-buffer programming,
+  sector erase, chip erase, CFI query, autoselect IDs, and reset-to-read mode. The mutable 8 MB image
+  lives in PSRAM while running; changed pages are retained across power cycles in a 4 MB board-flash
+  journal. Repeated saves compact automatically into their latest changed pages. The persistence region
+  can retain up to 2 MB of distinct changed pages, so it is designed for game-state saves rather than
+  bulk on-MSX rewriting of the complete cartridge image.
 - **One heavy engine at a time.** SCC and FM are never rendered simultaneously. Real games never use
   both at once, so the runtime selector picks the one in use; a title that expected both SCC and FM
   together would only hear the currently-driven one.

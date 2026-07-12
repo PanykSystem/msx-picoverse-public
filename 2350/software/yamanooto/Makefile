@@ -9,7 +9,7 @@
 ######################################################################
 
 # Shared version (can be overridden on the command line)
-VERSION ?= v1.15
+VERSION ?= v1.17
 
 # Paths
 PICO_DIR := pico/yamanooto

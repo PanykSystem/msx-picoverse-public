@@ -7,8 +7,8 @@
 
 static void send_detect_mapper(unsigned int index);
 static unsigned char send_set_mapper(unsigned int index, unsigned char mapper);
-static unsigned char send_load_options(unsigned int index, unsigned char *audio_profile, unsigned char *psg_enabled, unsigned char *mapper, unsigned char *sd_partition, unsigned char *audio_volume);
-static void send_save_options(unsigned int index, unsigned char audio_profile, unsigned char psg_enabled, unsigned char mapper, unsigned char sd_partition, unsigned char audio_volume);
+static unsigned char send_load_options(unsigned int index, unsigned char *audio_profile, unsigned char *psg_enabled, unsigned char *mapper, unsigned char *sd_partition, unsigned char *audio_volume, unsigned char *vdp_freq);
+static void send_save_options(unsigned int index, unsigned char audio_profile, unsigned char psg_enabled, unsigned char mapper, unsigned char sd_partition, unsigned char audio_volume, unsigned char vdp_freq);
 static void wait_for_ctrl_cmd_clear(void);
 static unsigned char read_mapper_value(void);
 static unsigned char read_ack_value(void);
@@ -18,11 +18,12 @@ static void render_rom_mapper_line(const char *mapper_text, int selected);
 static void render_rom_audio_line(const char *audio_text, int selected);
 static void render_rom_volume_line(unsigned char audio_volume, int selected);
 static void render_rom_psg_line(unsigned char psg_enabled, int selected);
+static void render_rom_freq_line(unsigned char row, unsigned char vdp_freq, int selected);
 static void render_rom_partition_line(unsigned char row, unsigned char sd_partition, int selected);
 static void render_rom_wifi_line(unsigned char row, unsigned char wifi_enabled, int selected);
 static void render_rom_action_line(unsigned char row, int selected);
 static void render_rom_options_block(const ROMRecord *record, int waiting_mapper, unsigned char audio_profile, unsigned char psg_enabled, unsigned char wifi_enabled, unsigned char allow_mapper_override, unsigned char allow_wifi_support, int selection);
-static void render_rom_footer_line(unsigned char mode);
+static void render_rom_footer_line(void);
 static void show_mp3_screen(unsigned int index);
 static void render_mp3_screen(const ROMRecord *record);
 static void render_mp3_counter_line(void);
@@ -31,7 +32,6 @@ static void send_mp3_select(unsigned int index);
 static unsigned int read_mp3_elapsed(void);
 static unsigned int read_mp3_selected_index(void);
 static ROMRecord *load_mp3_detail_record(unsigned int index);
-static unsigned char footer_mode_for_selection(int selection, unsigned char allow_mapper_override, int psg_selection, int partition_selection, int wifi_selection);
 static void build_mapper_text(const ROMRecord *record, int waiting_mapper, char *out, size_t out_size);
 static void build_audio_text(const ROMRecord *record, unsigned char audio_profile, char *out, size_t out_size);
 static unsigned char sanitize_audio_profile(const ROMRecord *record, unsigned char audio_profile);
@@ -41,19 +41,14 @@ static unsigned char current_wavegame_rom = 0;
 
 #define MP3_COUNTER_POLL_JIFFIES 5
 #define MP3_COUNTER_FORCE_JIFFIES 50
-#define ROM_FOOTER_DEFAULT 0
-#define ROM_FOOTER_MAPPER  1
-#define ROM_FOOTER_AUDIO   2
-#define ROM_FOOTER_PSG     3
-#define ROM_FOOTER_WIFI    4
-#define ROM_FOOTER_RUN     5
-#define ROM_FOOTER_SD      6
 
 static unsigned char sd_partition_count = 0;
 static unsigned char sd_partition_mask = 0;
 static unsigned char rom_sd_partition = 0;
 static unsigned char rom_audio_volume = AUDIO_VOLUME_DEFAULT;
+static unsigned char rom_vdp_freq = VDP_FREQ_DEFAULT;
 static unsigned char rom_allow_sd_partition = 0;
+static unsigned char rom_allow_freq = 0;
 
 static void write_index_query(unsigned int index) {
     Poke(CTRL_QUERY_BASE + 0, (unsigned char)(index & 0xFFu));
@@ -132,7 +127,7 @@ static unsigned char send_set_mapper(unsigned int index, unsigned char mapper) {
     return read_ack_value();
 }
 
-static unsigned char send_load_options(unsigned int index, unsigned char *audio_profile, unsigned char *psg_enabled, unsigned char *mapper, unsigned char *sd_partition, unsigned char *audio_volume) {
+static unsigned char send_load_options(unsigned int index, unsigned char *audio_profile, unsigned char *psg_enabled, unsigned char *mapper, unsigned char *sd_partition, unsigned char *audio_volume, unsigned char *vdp_freq) {
     write_index_query(index);
     for (unsigned int i = 2; i < CTRL_QUERY_SIZE; i++) {
         Poke(CTRL_QUERY_BASE + i, 0);
@@ -148,19 +143,24 @@ static unsigned char send_load_options(unsigned int index, unsigned char *audio_
     *mapper = Peek(CTRL_MAPPER);
     *sd_partition = Peek(CTRL_SD_PARTITION);
     *audio_volume = Peek(CTRL_AUDIO_VOLUME);
+    *vdp_freq = Peek(CTRL_VDP_FREQ);
+    if (*vdp_freq > VDP_FREQ_50HZ) {
+        *vdp_freq = VDP_FREQ_DEFAULT;
+    }
     sd_partition_count = Peek(CTRL_SD_PARTITION_INFO_BASE);
     sd_partition_mask = Peek(CTRL_SD_PARTITION_INFO_BASE + 1);
     return 1;
 }
 
-static void send_save_options(unsigned int index, unsigned char audio_profile, unsigned char psg_enabled, unsigned char mapper, unsigned char sd_partition, unsigned char audio_volume) {
+static void send_save_options(unsigned int index, unsigned char audio_profile, unsigned char psg_enabled, unsigned char mapper, unsigned char sd_partition, unsigned char audio_volume, unsigned char vdp_freq) {
     write_index_query(index);
     Poke(CTRL_QUERY_BASE + 2, audio_profile);
     Poke(CTRL_QUERY_BASE + 3, psg_enabled ? 1 : 0);
     Poke(CTRL_QUERY_BASE + 4, mapper);
     Poke(CTRL_QUERY_BASE + 5, sd_partition);
     Poke(CTRL_QUERY_BASE + 6, audio_volume);
-    for (unsigned int i = 7; i < CTRL_QUERY_SIZE; i++) {
+    Poke(CTRL_QUERY_BASE + 7, vdp_freq);
+    for (unsigned int i = 8; i < CTRL_QUERY_SIZE; i++) {
         Poke(CTRL_QUERY_BASE + i, 0);
     }
     Poke(CTRL_CMD, CMD_SAVE_OPTIONS);
@@ -233,16 +233,21 @@ void show_rom_screen(unsigned int index) {
     unsigned char allow_wifi_support = record_is_wifi_capable_system_rom(record);
     unsigned char allow_sd_partition = record_is_sunrise_sd_system_rom(record);
     unsigned char allow_psg = !record_is_sunrise_mapper_system_rom(record);
+    unsigned char allow_freq = !record_is_system_rom(record);
     unsigned char wifi_enabled = 0;
     int volume_selection = 2;
     int psg_selection = 3;
-    int partition_selection = allow_sd_partition ? 4 : -1;
-    int wifi_selection = allow_wifi_support ? (allow_sd_partition ? 5 : 4) : -1;
-    int action_selection = 4 + (allow_sd_partition ? 1 : 0) + (allow_wifi_support ? 1 : 0);
+    int freq_selection = allow_freq ? 4 : -1;
+    int base_after_freq = 4 + (allow_freq ? 1 : 0);
+    int partition_selection = allow_sd_partition ? base_after_freq : -1;
+    int wifi_selection = allow_wifi_support ? (base_after_freq + (allow_sd_partition ? 1 : 0)) : -1;
+    int action_selection = base_after_freq + (allow_sd_partition ? 1 : 0) + (allow_wifi_support ? 1 : 0);
     int selection = action_selection;
 
     rom_allow_sd_partition = allow_sd_partition;
+    rom_allow_freq = allow_freq;
     rom_audio_volume = AUDIO_VOLUME_DEFAULT;
+    rom_vdp_freq = VDP_FREQ_DEFAULT;
 
     if (record_is_mp3(record)) {
         show_mp3_screen(index);
@@ -267,7 +272,7 @@ void show_rom_screen(unsigned int index) {
     }
 
     if (!waiting_mapper) {
-        options_loaded = send_load_options(index, &audio_profile, &psg_enabled, &saved_mapper, &sd_partition, &rom_audio_volume);
+        options_loaded = send_load_options(index, &audio_profile, &psg_enabled, &saved_mapper, &sd_partition, &rom_audio_volume, &rom_vdp_freq);
         if (options_loaded && saved_mapper != 0 && allow_mapper_override) {
                 record->Mapper = (record->Mapper & (SOURCE_SD_FLAG | FOLDER_FLAG)) | saved_mapper;
         }
@@ -303,7 +308,7 @@ void show_rom_screen(unsigned int index) {
                     Poke(CTRL_WIFI_SUPPORT, allow_wifi_support ? wifi_enabled : 0);
                     Poke(CTRL_SD_PARTITION, allow_sd_partition ? sd_partition : 0);
                     Poke(CTRL_AUDIO_VOLUME, rom_audio_volume);
-                    send_save_options(index, audio_profile, psg_enabled, record_mapper_code(record->Mapper), allow_sd_partition ? sd_partition : 0, rom_audio_volume);
+                    send_save_options(index, audio_profile, psg_enabled, record_mapper_code(record->Mapper), allow_sd_partition ? sd_partition : 0, rom_audio_volume, rom_vdp_freq);
                     loadGame((int)index);
                     return;
                 }
@@ -368,6 +373,14 @@ void show_rom_screen(unsigned int index) {
                 psg_enabled = psg_enabled ? 0 : 1;
                 render_rom_options_block(record, waiting_mapper, audio_profile, psg_enabled, wifi_enabled, allow_mapper_override, allow_wifi_support, selection);
             }
+            if ((key == 28 || key == 29) && allow_freq && selection == freq_selection) {
+                if (key == 28) {
+                    rom_vdp_freq = (rom_vdp_freq >= VDP_FREQ_50HZ) ? VDP_FREQ_DEFAULT : (unsigned char)(rom_vdp_freq + 1);
+                } else {
+                    rom_vdp_freq = (rom_vdp_freq == VDP_FREQ_DEFAULT) ? VDP_FREQ_50HZ : (unsigned char)(rom_vdp_freq - 1);
+                }
+                render_rom_options_block(record, waiting_mapper, audio_profile, psg_enabled, wifi_enabled, allow_mapper_override, allow_wifi_support, selection);
+            }
             if ((key == 28 || key == 29) && allow_sd_partition && selection == partition_selection && sd_partition_count) {
                 int dir = (key == 28) ? 1 : -1;
                 unsigned char next_part = sd_partition;
@@ -407,7 +420,7 @@ void show_rom_screen(unsigned int index) {
                 audio_profile = sanitize_audio_profile(record, audio_profile);
             }
             if (!options_loaded) {
-                options_loaded = send_load_options(index, &audio_profile, &psg_enabled, &saved_mapper, &sd_partition, &rom_audio_volume);
+                options_loaded = send_load_options(index, &audio_profile, &psg_enabled, &saved_mapper, &sd_partition, &rom_audio_volume, &rom_vdp_freq);
                 if (options_loaded && saved_mapper != 0 && allow_mapper_override) {
                     record->Mapper = (record->Mapper & (SOURCE_SD_FLAG | FOLDER_FLAG)) | saved_mapper;
                 }
@@ -468,6 +481,16 @@ static void render_rom_psg_line(unsigned char psg_enabled, int selected) {
     render_rom_prefixed_line(10, "PSG Mirror: ", psg_enabled ? "Yes" : "No", selected);
 }
 
+static void render_rom_freq_line(unsigned char row, unsigned char vdp_freq, int selected) {
+    const char *text = "Default";
+    if (vdp_freq == VDP_FREQ_60HZ) {
+        text = "60Hz";
+    } else if (vdp_freq == VDP_FREQ_50HZ) {
+        text = "50Hz";
+    }
+    render_rom_prefixed_line(row, " Frequency: ", text, selected);
+}
+
 static void render_rom_partition_line(unsigned char row, unsigned char sd_partition, int selected) {
     char label[31];
     unsigned char i;
@@ -495,9 +518,11 @@ static void render_rom_options_block(const ROMRecord *record, int waiting_mapper
     char audio_text[32];
     int volume_selection = 2;
     int psg_selection = 3;
-    int partition_selection = rom_allow_sd_partition ? 4 : -1;
-    int wifi_selection = allow_wifi_support ? (rom_allow_sd_partition ? 5 : 4) : -1;
-    int action_selection = 4 + (rom_allow_sd_partition ? 1 : 0) + (allow_wifi_support ? 1 : 0);
+    int freq_selection = rom_allow_freq ? 4 : -1;
+    int base_after_freq = 4 + (rom_allow_freq ? 1 : 0);
+    int partition_selection = rom_allow_sd_partition ? base_after_freq : -1;
+    int wifi_selection = allow_wifi_support ? (base_after_freq + (rom_allow_sd_partition ? 1 : 0)) : -1;
+    int action_selection = base_after_freq + (rom_allow_sd_partition ? 1 : 0) + (allow_wifi_support ? 1 : 0);
     unsigned char row = 11;
 
     build_mapper_text(record, waiting_mapper, mapper_text, sizeof(mapper_text));
@@ -506,6 +531,9 @@ static void render_rom_options_block(const ROMRecord *record, int waiting_mapper
     render_rom_audio_line(audio_text, selection == 1);
     render_rom_volume_line(rom_audio_volume, selection == volume_selection);
     render_rom_psg_line(psg_enabled, selection == psg_selection);
+    if (rom_allow_freq) {
+        render_rom_freq_line(row++, rom_vdp_freq, selection == freq_selection);
+    }
     if (rom_allow_sd_partition) {
         render_rom_partition_line(row++, rom_sd_partition, selection == partition_selection);
     }
@@ -513,60 +541,13 @@ static void render_rom_options_block(const ROMRecord *record, int waiting_mapper
         render_rom_wifi_line(row++, wifi_enabled, selection == wifi_selection);
     }
     render_rom_action_line(row, selection == action_selection);
-    render_rom_footer_line(footer_mode_for_selection(selection, allow_mapper_override, psg_selection, partition_selection, wifi_selection));
+    render_rom_footer_line();
 }
 
-static unsigned char footer_mode_for_selection(int selection, unsigned char allow_mapper_override, int psg_selection, int partition_selection, int wifi_selection) {
-    if (selection == 0 && allow_mapper_override) {
-        return ROM_FOOTER_MAPPER;
-    }
-    if (selection == 1 || selection == 2) {
-        return ROM_FOOTER_AUDIO;
-    }
-    if (selection == psg_selection) {
-        return ROM_FOOTER_PSG;
-    }
-    if (selection == partition_selection) {
-        return ROM_FOOTER_SD;
-    }
-    if (selection == wifi_selection) {
-        return ROM_FOOTER_WIFI;
-    }
-    return ROM_FOOTER_RUN;
-}
-
-static void render_rom_footer_line(unsigned char mode) {
-    const char *text = 0;
+static void render_rom_footer_line(void) {
     menu_ui_clear_rows(22, 24);
     Locate(0, 22);
-
-    printf(menu_ui_status_text("[ESC-BACK] ", "[ESC - BACK] "));
-
-    switch (mode) {
-        case ROM_FOOTER_MAPPER:
-            text = "[LEFT/RIGHT - SELECT MAPPER]";
-            break;
-        case ROM_FOOTER_AUDIO:
-            text = "[LEFT/RIGHT - CHANGE]";
-            break;
-        case ROM_FOOTER_PSG:
-            text = "[LEFT/RIGHT - PSG MIRROR]";
-            break;
-        case ROM_FOOTER_WIFI:
-            text = "[LEFT/RIGHT - SELECT WIFI]";
-            break;
-        case ROM_FOOTER_SD:
-            text = "[LEFT/RIGHT - SD PARTITION]";
-            break;
-        case ROM_FOOTER_RUN:
-            text = "[ENTER - RUN]";
-            break;
-    }
-    if (text) {
-        printf(text);
-    }
-
-
+    printf(menu_ui_status_text("[ESC-BACK] [L/R-CHANGE]", "[ESC - BACK] [LEFT/RIGHT - CHANGE]"));
 }
 static void send_mp3_select(unsigned int index) {
     Poke(MP3_CTRL_INDEX_L, (unsigned char)(index & 0xFFu));

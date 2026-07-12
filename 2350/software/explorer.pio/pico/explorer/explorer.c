@@ -122,6 +122,10 @@
 #define CTRL_CHIP_ID_SIZE 17u // Control: 16 hex digits plus terminator
 #define CTRL_SD_PARTITION_INFO_BASE FH_STATUS_TEXT_BASE
 #define CTRL_SD_PARTITION_INFO_SIZE 32u
+#define CTRL_VDP_FREQ   0xBFA0 // Control: per-ROM VDP 50/60Hz load read-back (Pico -> MSX)
+#define VDP_FREQ_DEFAULT 0u
+#define VDP_FREQ_60HZ    1u
+#define VDP_FREQ_50HZ    2u
 #define FH_DATA_BASE    0xB900
 #define FH_RECORD_FLAG_OFFSET ROM_NAME_MAX
 #define FH_RECORD_SIZE_OFFSET (FH_RECORD_FLAG_OFFSET + 1u)
@@ -247,7 +251,8 @@
 #define PVC_OPTIONS_LEGACY_SIZE 6u
 #define PVC_OPTIONS_MAPPER_SIZE 7u
 #define PVC_OPTIONS_PARTITION_SIZE 8u
-#define PVC_OPTIONS_SIZE 9u
+#define PVC_OPTIONS_VOLUME_SIZE 9u
+#define PVC_OPTIONS_SIZE 10u
 
 #define PV_CONFIG_MAGIC_0 'P'
 #define PV_CONFIG_MAGIC_1 'V'
@@ -679,6 +684,8 @@ static volatile uint8_t ctrl_psg_emulation = 0; // 0=disabled, 1=primary PSG ove
 static volatile uint8_t ctrl_wavegame_rom = 0; // 0=normal ROM, 1=WAVEGAME sidecars detected
 static volatile uint8_t ctrl_sd_partition = 0; // 0=auto/default, 1-4=MBR primary partition
 static volatile uint8_t ctrl_audio_volume = AUDIO_VOLUME_DEFAULT; // per-ROM audio volume percent
+static volatile uint8_t ctrl_vdp_frequency = VDP_FREQ_DEFAULT; // per-ROM VDP 50/60Hz option (0=default,1=60,2=50)
+static volatile uint8_t vdp_freq_launch = VDP_FREQ_DEFAULT; // 50/60Hz to inject into the launched game's INIT (regular game mappers only)
 static uint8_t ctrl_sd_partition_info[CTRL_SD_PARTITION_INFO_SIZE];
 static char pico_chip_id[CTRL_CHIP_ID_SIZE] = "0000000000000000";
 static bool wavegame_active = false;
@@ -1603,6 +1610,7 @@ static void process_load_options_request(void) {
     ctrl_psg_emulation = 1;
     ctrl_sd_partition = 0;
     ctrl_audio_volume = AUDIO_VOLUME_DEFAULT;
+    ctrl_vdp_frequency = VDP_FREQ_DEFAULT;
     memset(ctrl_sd_partition_info, 0, sizeof(ctrl_sd_partition_info));
     quiesce_mp3_core1_before_sd_work();
     if (!sd_mount_card()) {
@@ -1662,8 +1670,11 @@ static void process_load_options_request(void) {
     if (sunrise_sd_options && br >= PVC_OPTIONS_PARTITION_SIZE) {
         refresh_sunrise_partition_info(data[7]);
     }
-    if (br >= PVC_OPTIONS_SIZE) {
+    if (br >= PVC_OPTIONS_VOLUME_SIZE) {
         ctrl_audio_volume = data[8] <= AUDIO_VOLUME_MAX ? data[8] : AUDIO_VOLUME_DEFAULT;
+    }
+    if (br >= PVC_OPTIONS_SIZE) {
+        ctrl_vdp_frequency = data[9] <= VDP_FREQ_50HZ ? data[9] : VDP_FREQ_DEFAULT;
     }
     ctrl_ack_value = 1;
 }
@@ -1686,6 +1697,10 @@ static void process_save_options_request(void) {
     if (audio_volume > AUDIO_VOLUME_MAX) {
         audio_volume = AUDIO_VOLUME_DEFAULT;
     }
+    uint8_t vdp_frequency = (uint8_t)filter_query[7];
+    if (vdp_frequency > VDP_FREQ_50HZ) {
+        vdp_frequency = VDP_FREQ_DEFAULT;
+    }
     char path[SD_PATH_MAX];
     if (!build_pvc_options_path(record_index, path, sizeof(path))) {
         return;
@@ -1698,7 +1713,7 @@ static void process_save_options_request(void) {
     uint8_t data[PVC_OPTIONS_SIZE] = {
         PVC_OPTIONS_MAGIC_0, PVC_OPTIONS_MAGIC_1, PVC_OPTIONS_MAGIC_2, PVC_OPTIONS_MAGIC_3,
         audio_selection, (uint8_t)(filter_query[3] ? 1u : 0u), (uint8_t)filter_query[4], sd_partition,
-        audio_volume
+        audio_volume, vdp_frequency
     };
     UINT written = 0;
     FRESULT fr = f_write(&fil, data, sizeof(data), &written);
@@ -1709,6 +1724,7 @@ static void process_save_options_request(void) {
         ctrl_mapper_value = data[6];
         ctrl_sd_partition = data[7];
         ctrl_audio_volume = data[8];
+        ctrl_vdp_frequency = data[9];
         ctrl_ack_value = 1;
     }
 }
@@ -1722,6 +1738,7 @@ static void process_prepare_quick_run_request(void) {
     ctrl_wifi_support = 0;
     ctrl_wavegame_rom = 0;
     ctrl_audio_volume = AUDIO_VOLUME_DEFAULT;
+    ctrl_vdp_frequency = VDP_FREQ_DEFAULT;
 
     if (index >= total_record_count) {
         return;
@@ -3234,6 +3251,32 @@ static inline void __not_in_flash_func(prepare_rom_source)(
         if (active_rom_size <= cap)
         {
             rom_base = rom_sram;
+        }
+
+        // Per-ROM 50/60Hz: patch the launched game's cartridge INIT so the VDP
+        // R9 frequency is set right after the BIOS boot, when the ROM's INIT
+        // runs. The menu cannot do this itself because the warm RST 00h reset
+        // that boots the ROM re-initializes R9. An 11-byte stub injected into
+        // the cached header writes VDP register 9 directly through port 0x99
+        // (bit 1 = 50/60Hz, other bits = the standard 192-line text default)
+        // then jumps to the original INIT. vdp_freq_launch is zeroed for system
+        // ROMs so their loaders are never touched.
+        if (vdp_freq_launch != VDP_FREQ_DEFAULT && bytes_to_cache >= 16u &&
+            rom_sram[0] == 'A' && rom_sram[1] == 'B')
+        {
+            uint16_t orig_init = (uint16_t)rom_sram[2] | ((uint16_t)rom_sram[3] << 8);
+            if (orig_init >= 0x4000u && orig_init <= 0xBFFFu)
+            {
+                uint8_t r9 = (vdp_freq_launch == VDP_FREQ_50HZ) ? 0x02u : 0x00u;
+                rom_sram[4] = 0x3Eu; rom_sram[5] = r9;                           // ld a,r9
+                rom_sram[6] = 0xD3u; rom_sram[7] = 0x99u;                        // out (099h),a  (VDP data)
+                rom_sram[8] = 0x3Eu; rom_sram[9] = 0x89u;                        // ld a,089h     (0x80|9)
+                rom_sram[10] = 0xD3u; rom_sram[11] = 0x99u;                      // out (099h),a  (select R9)
+                rom_sram[12] = 0xC3u;                                            // jp orig_init
+                rom_sram[13] = (uint8_t)(orig_init & 0xFFu);
+                rom_sram[14] = (uint8_t)(orig_init >> 8);
+                rom_sram[2] = 0x04u; rom_sram[3] = 0x40u;                        // INIT vector -> 0x4004
+            }
         }
     }
     else
@@ -7165,6 +7208,10 @@ int __no_inline_not_in_flash_func(loadrom_msx_menu)(uint32_t offset)
             else if (addr >= CTRL_CHIP_ID_BASE && addr < (CTRL_CHIP_ID_BASE + CTRL_CHIP_ID_SIZE))
             {
                 data = (uint8_t)pico_chip_id[addr - CTRL_CHIP_ID_BASE];
+            }
+            else if (!fh_menu_window_active && addr == CTRL_VDP_FREQ)
+            {
+                data = ctrl_vdp_frequency;
             }
             else if (fh_menu_window_active && addr >= FH_STATUS_TEXT_BASE && addr < (FH_STATUS_TEXT_BASE + FH_STATUS_TEXT_SIZE))
             {
@@ -11518,6 +11565,9 @@ int __no_inline_not_in_flash_func(main)()
     bool cartridge_audio = scc_audio || sfg_audio || audio_mode == AUDIO_MODE_DUAL_PSG || audio_mode == AUDIO_MODE_MSX_MUSIC;
     bool psg_emulation = (ctrl_psg_emulation != 0u);
     bool system_mapper = is_system_mapper(mapper);
+    // The 50/60Hz INIT patch only applies to regular game ROMs; the system ROMs
+    // (Nextor/Sunrise/C2/MegaRAM) manage their own boot and must not be patched.
+    vdp_freq_launch = system_mapper ? VDP_FREQ_DEFAULT : ctrl_vdp_frequency;
     bool wavegame_detected = wavegame_assets_detected_for_record((uint16_t)rom_index);
     wavegame_prepare_for_rom((uint16_t)rom_index,
         is_sd_rom && wavegame_detected && !system_mapper && audio_mode == AUDIO_MODE_NONE);

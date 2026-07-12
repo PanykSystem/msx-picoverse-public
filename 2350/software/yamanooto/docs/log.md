@@ -1,3 +1,20 @@
+# PicoVerse 2350 Yamanooto v1.17
+
+- Completed the persistent S29GL064N flash-save emulation behind `ENAR.WREN`: AMD single-byte and 32-byte buffered programming, sector/chip erase, CFI query, autoselect IDs, and reset-to-read mode are supported.
+- Stores mutable save pages in PSRAM and journals them in unused board flash with safe multicore flash writes; repeated saves compact to their latest changed pages when the journal fills.
+- Preserved reliable Pampas & Selene boot behavior by keeping all unmodified ROM reads on the original XIP image. PSRAM is a lazy overlay used only for restored, programmed, or erased flash pages; the expanded-slot bootstrap remains available immediately at power-on.
+- Flash operations complete synchronously, so polling code observes the completed byte without stalling the MSX bus. The journal is intended for save-state workloads, not a full 8 MB on-MSX cartridge rewrite.
+- Updated the Yamanooto implementation guide and tool manual for the full game-save command interface and persistence boundary.
+- Version bumped to v1.17 (top-level and tool Makefiles).
+
+# PicoVerse 2350 Yamanooto v1.16
+
+- Added persistent S29GL064 flash-save emulation: the 8 MB cartridge image is now mutable in external PSRAM and modified pages/sectors are replayed from a journal in the unused upper board flash on boot.
+- Implemented the AMD program, sector-erase, reset and autoselect command path gated by `ENAR.WREN`, including Pampas & Selene's observed `0x4AAA` / `0x4555` x16 unlock sequence. Normal mapper, SCC and FM writes remain unchanged while `WREN` is clear.
+- Added Pico SDK flash-safe multicore coordination so save-journal writes never execute from the XIP flash being programmed.
+- Updated the Yamanooto implementation guide and tool manual with the persistent game-save behavior and the remaining bulk-reflash limitation.
+- Version bumped to v1.16 (top-level and tool Makefiles). Firmware and tool verified building.
+
 # PicoVerse 2350 Yamanooto v1.15
 
 - Added Explorer-style USB CDC stdio debug support for Yamanooto and trace points for boot, subslot selection, Yamanooto registers, SCC raw-bank/mode activation, SCC register writes, FM writes, and audio engine switching.

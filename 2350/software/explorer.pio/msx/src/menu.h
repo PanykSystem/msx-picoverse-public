@@ -70,6 +70,13 @@
 #define AUDIO_VOLUME_DEFAULT 100
 #define AUDIO_VOLUME_MAX 200
 #define AUDIO_VOLUME_STEP 10
+#define VDP_FREQ_DEFAULT 0
+#define VDP_FREQ_60HZ 1
+#define VDP_FREQ_50HZ 2
+// Per-ROM VDP frequency load read-back byte (Pico -> MSX). Sits in the free gap
+// between the SD partition info buffer (0xBF80..0xBF9F) and the chip-id buffer
+// (0xBFAF..0xBFBF). The save channel reuses query buffer byte 7.
+#define CTRL_VDP_FREQ 0xBFA0
 #define MP3_CTRL_BASE      0xBFE0
 #define MP3_CTRL_CMD       (MP3_CTRL_BASE + 0)
 #define MP3_CTRL_STATUS    (MP3_CTRL_BASE + 1)

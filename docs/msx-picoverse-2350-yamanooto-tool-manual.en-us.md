@@ -97,8 +97,11 @@ Audio is 16-bit stereo at 44.1 kHz through the on-cartridge I2S DAC.
 
 ## Limitations
 
-- **Flash programming is not emulated.** The cartridge runs the pre-flashed image built by this tool;
-  on-MSX Yamanooto self-flashing (`WREN` + flash command sequences) is ignored.
+- **Game-save flash commands are supported.** Yamanooto software can use `WREN` with standard AMD
+  single-byte programming, 32-byte write-buffer programming, sector erase, chip erase, CFI query and
+  autoselect sequences. Saves persist in a 4 MB board-flash journal and are restored when the same ROM
+  image boots; repeated saves compact into their latest changed pages. The journal holds up to 2 MB of
+  distinct changed pages and does not support bulk on-MSX rewriting of the entire cartridge image.
 - **PicoVerse 2350 only.** The Yamanooto firmware requires the RP2350B board, dual cores, and the I2S
   DAC; it is not available for the PicoVerse 2040.
 - With MSX-MUSIC always present, the machine performs one extra reset at cold boot (during loading)
