@@ -1,3 +1,11 @@
+# PicoVerse 2350 Yamanooto v1.18
+
+- Made the FM-PAC / expanded slot optional and OFF by default. The cartridge is now presented as a plain, non-expanded slot (exactly like the real Yamanooto hardware and openMSX) unless the FM-PAC is explicitly requested, restoring compatibility with games that mis-handle an expanded cartridge slot (e.g. Aleste Gaiden in the Aleste Collection, which was showing "Syntax error in 0").
+- Firmware: added `yamanooto_run_simple()`, a plain-slot loop with no secondary-slot register (`0xFFFF`) and no FM-PAC sub-slot; `main()` now dispatches on the config-record `type` byte — `YAMA_MSX_MUSIC_FLAG` (`0x20`) set runs the expanded FM-PAC loop, clear runs the plain loop. No expanded-slot cold-boot bootstrap is used in plain mode.
+- Tool: added the `-f` / `--fmpac` option that sets `YAMANOOTO_MSX_MUSIC_FLAG` in the config-record `type` byte to enable the expanded slot + FM-PAC BIOS for the image; without it the image is a plain slot. Updated the usage text and the build summary (Audio/Slot lines). The FM-PAC BIOS is still embedded/appended so a flag-only change can toggle it.
+- Diagnosis (openMSX MCP + ROM disassembly): the Aleste Collection uses pure software banking, and openMSX runs the cartridge as a simple slot (`EXPTBL` bit clear). Only Aleste Gaiden relocates itself into RAM using heavy expanded-slot management (`RDSLT`/`ENASLT`/`CALSLT`, direct `0xFFFF` writes, `EXPTBL` scans), so our PicoVerse-added FM-PAC expansion broke its slot logic while the other games were unaffected. Added `devtools/z80dis.py` (minimal Z80 disassembler) used for the analysis.
+- Version bumped to v1.18 (top-level and tool Makefiles). Firmware and tool verified building; both plain (`type=0x01`) and FM-PAC (`type=0x21`) UF2 images verified.
+
 # PicoVerse 2350 Yamanooto v1.17
 
 - Completed the persistent S29GL064N flash-save emulation behind `ENAR.WREN`: AMD single-byte and 32-byte buffered programming, sector/chip erase, CFI query, autoselect IDs, and reset-to-read mode are supported.

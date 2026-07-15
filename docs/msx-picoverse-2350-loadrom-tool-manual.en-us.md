@@ -57,6 +57,7 @@ loadrom.exe [options] [romfile]
 - `-d`, `--dual-psg` : Enable secondary AY-3-8910 (PSG) emulation on I/O ports `0x10` (register select) and `0x11` (data). The Pico captures `OUT (0x10/0x11),A` writes via PIO1 and streams a mixed signal to the I2S DAC alongside the host MSX's PSG. Only valid with external ROM files whose mapper is not Konami SCC or Manbow2 (those mappers carry an on-cartridge SCC chip and reserve the second audio slot for SCC emulation).
 - `-f`, `-fmpac` : Enable MSX-MUSIC / YM2413 emulation on I/O ports `0x7C` (register select) and `0x7D` (data). The Pico captures OPLL writes via PIO1 and streams the generated FM audio to the I2S DAC. The UF2 also embeds the FM-PAC BIOS and exposes it in an expanded FM-PAC subslot so ROMs that use MSX-MUSIC BIOS calls can find it. Only valid with non-SYSTEM external ROM files.
 - `-4`, `--opl4` : Build a dedicated, standalone OPL4 / YMF278B / MoonSound cartridge. This is **not** a ROM loader: the UF2 contains only the OPL4 firmware and the 2 MB YRW801-M wave ROM, turning the cartridge into a MoonSound-compatible sound device (2 MB wave ROM + 2 MB PCM sample RAM) on the standard MoonSound I/O ports. It does not take a ROM file and is mutually exclusive with every other option.
+- `--22khz` : With `-4` / `--opl4`, build the dedicated OPL4 firmware variant that renders and outputs at 22050 Hz instead of the default 44100 Hz.
 - `-o <filename>`, `--output <filename>` : Override the UF2 output name (default `loadrom.uf2`).
 - Positional argument: the ROM file to embed. Required for normal ROM loading; not accepted with `-s1`/`-m1`/`-s2`/`-m2`/`-c1`/`-c2`/`-r1`/`-r2`.
 
@@ -90,6 +91,7 @@ Usage:
 ```
 loadrom.exe -4                       # writes loadrom.uf2
 loadrom.exe -4 -o moonsound.uf2      # custom output name
+loadrom.exe -4 --22khz -o moonsound-22k.uf2
 ```
 
 Flash the resulting UF2 in BOOTSEL mode, then use any MoonSound software on the MSX — for example MoonTest (detection and RAM test), SETOPL4 (sample upload/playback), and MoonBlaster / MBWAVE (music playback). No microSD, USB drive, or ESP-01 is required for this mode.

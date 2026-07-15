@@ -73,7 +73,7 @@
 // -----------------------
 // SCC emulation constants
 // -----------------------
-#define SCC_SAMPLE_RATE 44100
+#define SCC_SAMPLE_RATE 22050
 #define SCC_CLOCK       3579545
 #define SCC_VOLUME_SHIFT 2    // Left-shift SCC output for volume boost (4x)
 #define SCC_AUDIO_BUFFER_SAMPLES 256
@@ -81,7 +81,7 @@
 // -----------------------
 // Dual PSG emulation constants
 // -----------------------
-#define PSG_SAMPLE_RATE 44100
+#define PSG_SAMPLE_RATE 22050
 #define PSG_CLOCK       1789773
 #define PSG_VOLUME_SHIFT 2
 #define PSG_PORT_REG    0x10u   // Secondary PSG register-select port
@@ -92,14 +92,14 @@
 // -----------------------
 // MSX-MUSIC / YM2413 (OPLL) emulation constants (optional add-on)
 // -----------------------
-#define MSX_MUSIC_SAMPLE_RATE  44100
+#define MSX_MUSIC_SAMPLE_RATE  22050
 #define MSX_MUSIC_CLOCK        3579545
 #define MSX_MUSIC_VOLUME_SHIFT 2
 #define MSX_MUSIC_PORT_REG     0x7Cu   // MSX-MUSIC register-select port
 #define MSX_MUSIC_PORT_DATA    0x7Du   // MSX-MUSIC data port
 
 // Config record 'type' byte flags (see the PC tool)
-#define YAMA_MSX_MUSIC_FLAG    0x20u   // Enable MSX-MUSIC (YM2413) emulation
+#define YAMA_MSX_MUSIC_FLAG    0x20u   // Enable the expanded slot + FM-PAC (YM2413); off = plain slot
 
 // -----------------------
 // Yamanooto register interface (memory mapped, 0x7FFC-0x7FFF, NOT mirrored)

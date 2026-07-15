@@ -1,5 +1,10 @@
 # Change Log
 
+## PicoVerse 2350 Loadrom v2.67
+
+- Added the OPL4-only `--22khz` tool option for `-4`/`--opl4` images. The build now produces and embeds a second dedicated OPL4 firmware payload compiled for 22050 Hz; that variant advances FM/PCM/timer state by two normal OPL4 sample periods per generated output sample so pitch and tempo stay at normal speed while reducing output-rate workload. Default OPL4 UF2s continue to use the 44100 Hz firmware.
+- Version bumped to v2.67 (top-level and tool Makefiles).
+
 ## PicoVerse 2350 Loadrom v2.66
 
 - Fixed the PC tool mapper-detection read path to reject truncated ROM reads before hashing or scanning the allocated ROM buffer.

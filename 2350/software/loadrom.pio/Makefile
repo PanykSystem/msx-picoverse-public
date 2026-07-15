@@ -9,7 +9,7 @@
 ######################################################################
 
 # Shared version (can be overridden on the command line)
-VERSION ?= v2.66
+VERSION ?= v2.67
 
 # Paths
 PICO_DIR := pico/loadrom
@@ -18,6 +18,8 @@ PICO_CONFIG := $(PICO_BUILD)/CMakeCache.txt
 OPL4_DIR := pico/opl4
 OPL4_BUILD := $(OPL4_DIR)/build
 OPL4_CONFIG := $(OPL4_BUILD)/CMakeCache.txt
+OPL4_22K_BUILD := $(OPL4_DIR)/build-22k
+OPL4_22K_CONFIG := $(OPL4_22K_BUILD)/CMakeCache.txt
 TOOL_DIR := tool
 WIFI_DIR := ../wifi
 WIFI_BIOS_DIR := $(WIFI_DIR)/bios
@@ -38,7 +40,7 @@ CMAKE_MAKE_PROGRAM_FLAG := $(if $(CMAKE_MAKE_PROGRAM),-DCMAKE_MAKE_PROGRAM="$(CM
 # Make options
 MAKE ?= make
 
-.PHONY: all bios updater firmware opl4 tool clean
+.PHONY: all bios updater firmware opl4 opl4_22k tool clean
 
 all: bios updater firmware opl4 tool
 
@@ -53,12 +55,21 @@ firmware: $(PICO_CONFIG)
 $(PICO_CONFIG):
 	@$(CMAKE) $(CMAKE_GENERATOR_FLAG) $(CMAKE_MAKE_PROGRAM_FLAG) -S "$(PICO_DIR)" -B "$(PICO_BUILD)" -DCMAKE_BUILD_TYPE=$(CMAKE_BUILD_TYPE)
 
-opl4: $(OPL4_CONFIG)
+opl4: $(OPL4_CONFIG) $(OPL4_22K_CONFIG)
 	@echo "Building standalone OPL4 firmware"
 	@$(CMAKE) --build "$(OPL4_BUILD)"
+	@echo "Building standalone OPL4 firmware (22.05 kHz)"
+	@$(CMAKE) --build "$(OPL4_22K_BUILD)"
 
 $(OPL4_CONFIG):
 	@$(CMAKE) $(CMAKE_GENERATOR_FLAG) $(CMAKE_MAKE_PROGRAM_FLAG) -S "$(OPL4_DIR)" -B "$(OPL4_BUILD)" -DCMAKE_BUILD_TYPE=$(CMAKE_BUILD_TYPE)
+
+opl4_22k: $(OPL4_22K_CONFIG)
+	@echo "Building standalone OPL4 firmware (22.05 kHz)"
+	@$(CMAKE) --build "$(OPL4_22K_BUILD)"
+
+$(OPL4_22K_CONFIG):
+	@$(CMAKE) $(CMAKE_GENERATOR_FLAG) $(CMAKE_MAKE_PROGRAM_FLAG) -S "$(OPL4_DIR)" -B "$(OPL4_22K_BUILD)" -DCMAKE_BUILD_TYPE=$(CMAKE_BUILD_TYPE) -DOPL4_TARGET_NAME=opl4_22k -DOPL4_SAMPLE_RATE=22050 -DOPL4_OUTPUT_STEP=2
 
 tool: bios opl4
 	@echo "Building PC tool"
@@ -72,3 +83,5 @@ clean:
 	@$(CMAKE) -E rm -rf "$(PICO_BUILD)"
 	@$(CMAKE) --build "$(OPL4_BUILD)" --target clean || true
 	@$(CMAKE) -E rm -rf "$(OPL4_BUILD)"
+	@$(CMAKE) --build "$(OPL4_22K_BUILD)" --target clean || true
+	@$(CMAKE) -E rm -rf "$(OPL4_22K_BUILD)"

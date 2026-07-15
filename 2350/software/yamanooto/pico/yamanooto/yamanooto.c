@@ -63,6 +63,10 @@
 #include "emu2413.h"
 #include "msx_bus.pio.h"
 
+#ifndef YAMANOOTO_FMVOICE_TRACE
+#define YAMANOOTO_FMVOICE_TRACE 0
+#endif
+
 // Size of the FM-PAC BIOS image appended after the ROM payload when MSX-MUSIC
 // is enabled (64 KB, paged in four 16 KB banks).
 #define FMPAC_BIOS_SIZE 65536u
@@ -93,9 +97,24 @@ typedef struct {
 static msx_pio_io_bus_t msx_io_bus;
 static bool msx_io_bus_programs_loaded = false;
 
+static bool debug_stdio_ready = false;
+
+static void debug_stdio_init(void)
+{
+#if YAMANOOTO_USB_STDIO_DEBUG
+    if (!debug_stdio_ready)
+    {
+        stdio_init_all();
+        debug_stdio_ready = true;
+    }
+#endif
+}
+
 static void debug_trace(const char *fmt, ...)
 {
 #if YAMANOOTO_USB_STDIO_DEBUG
+    if (!debug_stdio_ready)
+        return;
     va_list args;
     va_start(args, fmt);
     vprintf(fmt, args);
@@ -196,6 +215,21 @@ static volatile uint32_t fm_activity = 0;    // bumped on OPLL register writes (
 static volatile bool scc_render_requested = false;
 static volatile uint32_t scc_debug_writes = 0;
 static volatile uint32_t fm_debug_writes = 0;
+
+#if YAMANOOTO_USB_STDIO_DEBUG
+static volatile uint32_t audio_debug_buffers = 0;
+static volatile uint32_t audio_debug_last_us = 0;
+static volatile uint32_t audio_debug_max_us = 0;
+static volatile uint32_t audio_debug_overruns = 0;
+static volatile uint32_t audio_debug_engine = 0;
+#define YAMA_AUDIO_BUFFER_BUDGET_US ((SCC_AUDIO_BUFFER_SAMPLES * 1000000u) / SCC_SAMPLE_RATE)
+#endif
+
+#if YAMANOOTO_USB_STDIO_DEBUG && YAMANOOTO_FMVOICE_TRACE
+static uint8_t fm_debug_selected_reg = 0;
+static uint8_t fm_debug_reg_shadow[0x40];
+static uint16_t fm_debug_custom_channel_mask = 0;
+#endif
 
 
 // -----------------------------------------------------------------------
@@ -1173,24 +1207,137 @@ static inline void __not_in_flash_func(yama_mem_write)(uint16_t addr, uint8_t da
 // register writes are what makes the FM sound "robotic".
 #define MSX_MUSIC_WRITE_RING_SIZE 256u
 #define MSX_MUSIC_WRITE_RING_MASK (MSX_MUSIC_WRITE_RING_SIZE - 1u)
-static volatile uint16_t msx_music_write_ring[MSX_MUSIC_WRITE_RING_SIZE];
+static volatile uint32_t msx_music_write_ring[MSX_MUSIC_WRITE_RING_SIZE];
 static volatile uint32_t msx_music_write_ring_head; // producer (core 0)
 static volatile uint32_t msx_music_write_ring_tail; // consumer (core 1)
+static volatile uint32_t msx_music_write_ring_drops;
+
+typedef enum {
+    MSX_MUSIC_SOURCE_FMPAC_MEM = 0,
+    MSX_MUSIC_SOURCE_RAW_IO = 1,
+} msx_music_write_source_t;
+
+#if YAMANOOTO_USB_STDIO_DEBUG
+static void audio_debug_report(void)
+{
+    static uint32_t last_buffers = 0;
+    uint32_t buffers = audio_debug_buffers;
+    if (buffers == last_buffers || (buffers - last_buffers) < 128u)
+        return;
+
+    uint32_t max_us = audio_debug_max_us;
+    uint32_t overruns = audio_debug_overruns;
+    audio_debug_max_us = 0;
+    last_buffers = buffers;
+    debug_trace("YAMA AUDIO budget=%luus last=%luus max=%luus over=%lu buffers=%lu engine=%lu fmWrites=%lu keys=%08lX drops=%lu",
+                (unsigned long)YAMA_AUDIO_BUFFER_BUDGET_US,
+                (unsigned long)audio_debug_last_us,
+                (unsigned long)max_us,
+                (unsigned long)overruns,
+                (unsigned long)buffers,
+                (unsigned long)audio_debug_engine,
+                (unsigned long)fm_debug_writes,
+                msx_music_instance ? (unsigned long)msx_music_instance->slot_key_status : 0ul,
+                (unsigned long)msx_music_write_ring_drops);
+}
+#endif
+
+#if YAMANOOTO_USB_STDIO_DEBUG && YAMANOOTO_FMVOICE_TRACE
+static const char *__not_in_flash_func(msx_music_source_name)(msx_music_write_source_t source)
+{
+    return source == MSX_MUSIC_SOURCE_FMPAC_MEM ? "mem" : "io";
+}
+
+static void __not_in_flash_func(msx_music_debug_trace_write)(msx_music_write_source_t source, uint8_t port, uint8_t data)
+{
+    if (port == MSX_MUSIC_PORT_REG)
+    {
+        fm_debug_selected_reg = data & 0x3Fu;
+        return;
+    }
+
+    if (port != MSX_MUSIC_PORT_DATA)
+        return;
+
+    uint8_t reg = fm_debug_selected_reg;
+    uint8_t old_data = fm_debug_reg_shadow[reg];
+    fm_debug_reg_shadow[reg] = data;
+
+    uint32_t count = fm_debug_writes;
+    if (reg <= 0x07u && old_data != data)
+    {
+        debug_trace("YAMA FMVOICE patch#%lu src=%s reg=%02X data=%02X old=%02X patch=%02X,%02X,%02X,%02X,%02X,%02X,%02X,%02X keys=%08lX drops=%lu",
+                    (unsigned long)count,
+                    msx_music_source_name(source),
+                    (unsigned)reg,
+                    (unsigned)data,
+                    (unsigned)old_data,
+                    (unsigned)fm_debug_reg_shadow[0],
+                    (unsigned)fm_debug_reg_shadow[1],
+                    (unsigned)fm_debug_reg_shadow[2],
+                    (unsigned)fm_debug_reg_shadow[3],
+                    (unsigned)fm_debug_reg_shadow[4],
+                    (unsigned)fm_debug_reg_shadow[5],
+                    (unsigned)fm_debug_reg_shadow[6],
+                    (unsigned)fm_debug_reg_shadow[7],
+                    msx_music_instance ? (unsigned long)msx_music_instance->slot_key_status : 0ul,
+                    (unsigned long)msx_music_write_ring_drops);
+    }
+    else if (reg >= 0x30u && reg <= 0x38u)
+    {
+        uint8_t channel = reg - 0x30u;
+        uint8_t instrument = (uint8_t)(data >> 4);
+        uint16_t channel_bit = (uint16_t)(1u << channel);
+        if (instrument == 0u && (fm_debug_custom_channel_mask & channel_bit) == 0u)
+        {
+            fm_debug_custom_channel_mask |= channel_bit;
+            debug_trace("YAMA FMVOICE custom ch=%u vol=%02X patch=%02X,%02X,%02X,%02X,%02X,%02X,%02X,%02X keys=%08lX drops=%lu",
+                        (unsigned)channel,
+                        (unsigned)(data & 0x0Fu),
+                        (unsigned)fm_debug_reg_shadow[0],
+                        (unsigned)fm_debug_reg_shadow[1],
+                        (unsigned)fm_debug_reg_shadow[2],
+                        (unsigned)fm_debug_reg_shadow[3],
+                        (unsigned)fm_debug_reg_shadow[4],
+                        (unsigned)fm_debug_reg_shadow[5],
+                        (unsigned)fm_debug_reg_shadow[6],
+                        (unsigned)fm_debug_reg_shadow[7],
+                        msx_music_instance ? (unsigned long)msx_music_instance->slot_key_status : 0ul,
+                        (unsigned long)msx_music_write_ring_drops);
+        }
+        else if (instrument != 0u)
+        {
+            fm_debug_custom_channel_mask &= (uint16_t)~channel_bit;
+        }
+    }
+}
+#endif
 
 // core 0: queue an OPLL register write for core 1 (no OPLL access here).
-static inline void __not_in_flash_func(msx_music_ring_push)(uint8_t port, uint8_t data)
+static inline void __not_in_flash_func(msx_music_ring_push)(uint8_t port, uint8_t data, msx_music_write_source_t source)
 {
     uint32_t head = msx_music_write_ring_head;
     uint32_t next = (head + 1u) & MSX_MUSIC_WRITE_RING_MASK;
     if (next == msx_music_write_ring_tail)
+    {
+        uint32_t drops = ++msx_music_write_ring_drops;
+        if (drops <= 16u || ((drops & 0xFFu) == 0u))
+            debug_trace("YAMA FM ring drop#%lu src=%u port=%02X data=%02X head=%lu tail=%lu",
+                        (unsigned long)drops,
+                        (unsigned)source,
+                        (unsigned)port,
+                        (unsigned)data,
+                        (unsigned long)head,
+                        (unsigned long)msx_music_write_ring_tail);
         return; // ring full: drop (audio only)
-    msx_music_write_ring[head] = (uint16_t)(((uint16_t)port << 8) | data);
+    }
+    msx_music_write_ring[head] = ((uint32_t)source << 16) | ((uint32_t)port << 8) | data;
     __dmb();
     msx_music_write_ring_head = next;
 }
 
 // core 1: apply a register write directly to the OPLL.
-static inline void __not_in_flash_func(msx_music_apply)(uint8_t port, uint8_t data)
+static inline void __not_in_flash_func(msx_music_apply)(uint8_t port, uint8_t data, msx_music_write_source_t source)
 {
     if (msx_music_instance)
     {
@@ -1198,8 +1345,15 @@ static inline void __not_in_flash_func(msx_music_apply)(uint8_t port, uint8_t da
         scc_render_requested = false;
         fm_activity++;   // record FM activity for the on-the-fly engine selector
         uint32_t count = ++fm_debug_writes;
+    #if YAMANOOTO_USB_STDIO_DEBUG && YAMANOOTO_FMVOICE_TRACE
+        msx_music_debug_trace_write(source, port, data);
+    #elif !YAMANOOTO_USB_STDIO_DEBUG
         if (count <= 64u || ((count & 0xFFu) == 0u))
             debug_trace("YAMA FM write#%lu port=%u data=%02X keys=%08lX", (unsigned long)count, (unsigned)port, (unsigned)data, (unsigned long)msx_music_instance->slot_key_status);
+    #else
+        (void)count;
+        (void)source;
+#endif
     }
 }
 
@@ -1212,8 +1366,10 @@ static inline void __not_in_flash_func(msx_music_drain_ring)(void)
     while (tail != msx_music_write_ring_head)
     {
         __dmb();
-        uint16_t entry = msx_music_write_ring[tail];
-        msx_music_apply((uint8_t)(entry >> 8), (uint8_t)(entry & 0xFFu));
+        uint32_t entry = msx_music_write_ring[tail];
+        msx_music_apply((uint8_t)((entry >> 8) & 0xFFu),
+                        (uint8_t)(entry & 0xFFu),
+                        (msx_music_write_source_t)((entry >> 16) & 0xFFu));
         tail = (tail + 1u) & MSX_MUSIC_WRITE_RING_MASK;
     }
     msx_music_write_ring_tail = tail;
@@ -1354,7 +1510,7 @@ static inline void __not_in_flash_func(yama_service_psg_io)(void)
                  (port == MSX_MUSIC_PORT_REG || port == MSX_MUSIC_PORT_DATA))
         {
             // Optional MSX-MUSIC (YM2413) on I/O ports 0x7C/0x7D (core 1 owns it).
-            msx_music_apply(port, io_data);
+            msx_music_apply(port, io_data, MSX_MUSIC_SOURCE_RAW_IO);
         }
     }
 
@@ -1502,6 +1658,7 @@ static void __no_inline_not_in_flash_func(core1_yamanooto_audio)(void)
 
         if (engine != last_engine)
         {
+#if !YAMANOOTO_USB_STDIO_DEBUG
             debug_trace("YAMA audio engine=%d scc=%u fm=%u fmKey=%u sccReq=%u sccWrites=%lu fmWrites=%lu keys=%08lX",
                         engine,
                         scc_playing ? 1u : 0u,
@@ -1511,10 +1668,14 @@ static void __no_inline_not_in_flash_func(core1_yamanooto_audio)(void)
                         (unsigned long)scc_debug_writes,
                         (unsigned long)fm_debug_writes,
                         msx_music_instance ? (unsigned long)msx_music_instance->slot_key_status : 0ul);
+#endif
             last_engine = engine;
         }
 
         int16_t *samples = (int16_t *)buffer->buffer->bytes;
+    #if YAMANOOTO_USB_STDIO_DEBUG
+        uint32_t render_start_us = time_us_32();
+    #endif
         for (int i = 0; i < SCC_AUDIO_BUFFER_SAMPLES; i++)
         {
             yama_service_psg_io();
@@ -1544,6 +1705,16 @@ static void __no_inline_not_in_flash_func(core1_yamanooto_audio)(void)
             samples[i * 2]     = s;  // left
             samples[i * 2 + 1] = s;  // right
         }
+#if YAMANOOTO_USB_STDIO_DEBUG
+        uint32_t render_us = time_us_32() - render_start_us;
+        audio_debug_last_us = render_us;
+        if (render_us > audio_debug_max_us)
+            audio_debug_max_us = render_us;
+        if (render_us > YAMA_AUDIO_BUFFER_BUDGET_US)
+            audio_debug_overruns++;
+        audio_debug_engine = (uint32_t)engine;
+        audio_debug_buffers++;
+#endif
         buffer->sample_count = SCC_AUDIO_BUFFER_SAMPLES;
         give_audio_buffer(audio_pool, buffer);
     }
@@ -1573,27 +1744,31 @@ static inline void __not_in_flash_func(fmpac_handle_write)(fmpac_state_t *fmpac,
 {
     if (addr == 0x7FF4u)
     {
-        msx_music_ring_push(MSX_MUSIC_PORT_REG, data);
+        msx_music_ring_push(MSX_MUSIC_PORT_REG, data, MSX_MUSIC_SOURCE_FMPAC_MEM);
     }
     else if (addr == 0x7FF5u)
     {
-        msx_music_ring_push(MSX_MUSIC_PORT_DATA, data);
+        msx_music_ring_push(MSX_MUSIC_PORT_DATA, data, MSX_MUSIC_SOURCE_FMPAC_MEM);
     }
     else if (addr == 0x7FF6u)
     {
         fmpac->control = data;
+        debug_trace("YAMA FMPAC control=%02X sram=%u page=%u", (unsigned)data, fmpac_sram_enabled(fmpac) ? 1u : 0u, (unsigned)fmpac->page);
     }
     else if (addr == 0x7FF7u)
     {
         fmpac->page = data & 0x03u;
+        debug_trace("YAMA FMPAC page=%u raw=%02X control=%02X", (unsigned)fmpac->page, (unsigned)data, (unsigned)fmpac->control);
     }
     else if (addr == 0x5FFEu)
     {
         fmpac->sram_key_5ffe = data;
+        debug_trace("YAMA FMPAC sram-key 5FFE=%02X enabled=%u", (unsigned)data, fmpac_sram_enabled(fmpac) ? 1u : 0u);
     }
     else if (addr == 0x5FFFu)
     {
         fmpac->sram_key_5fff = data;
+        debug_trace("YAMA FMPAC sram-key 5FFF=%02X enabled=%u", (unsigned)data, fmpac_sram_enabled(fmpac) ? 1u : 0u);
     }
     else if (fmpac_sram_enabled(fmpac) && addr >= 0x4000u && addr <= 0x5FFFu)
     {
@@ -1844,22 +2019,94 @@ static void __no_inline_not_in_flash_func(yamanooto_run_fmpac)(void)
     }
 }
 
+// -----------------------------------------------------------------------
+// Main emulation loop (core 0) - plain slot, MSX-MUSIC raw I/O only
+// -----------------------------------------------------------------------
+// Selected by default (config-record YAMA_MSX_MUSIC_FLAG clear). The cartridge
+// is presented exactly like the real Yamanooto hardware / openMSX: a single,
+// non-expanded slot that answers the mapper directly at 0x4000-0xBFFF (with the
+// usual mirroring), with no secondary-slot register (0xFFFF) and no FM-PAC BIOS
+// sub-slot. Games that mis-handle the cartridge slot being expanded (e.g. Aleste
+// Gaiden) work in this mode. Raw MSX-MUSIC I/O ports 0x7C/0x7D remain active so
+// direct OPLL I/O can be tested without exposing the FM-PAC BIOS.
+static void __no_inline_not_in_flash_func(yamanooto_run_simple)(void)
+{
+    rom_base = rom + ROM_RECORD_SIZE;
+
+    // Plain-slot images must answer the MSX cold-boot slot scan immediately.
+    // USB debug uses a zero CDC connect wait, so it can be brought up before
+    // the bus without blocking the initial cartridge probe.
+#if YAMANOOTO_USB_STDIO_DEBUG
+    debug_stdio_init();
+    debug_trace("YAMA boot USB_DEBUG=%u", (unsigned)YAMANOOTO_USB_STDIO_DEBUG);
+    debug_trace("YAMA config active_rom_size=%lu", (unsigned long)active_rom_size);
+    debug_trace("YAMA plain slot mode (MSX-MUSIC IO only, no FM-PAC BIOS)");
+#endif
+
+    msx_pio_bus_init();
+
+    yama_init_sound_chips();
+#if !YAMANOOTO_USB_STDIO_DEBUG
+    if (!yama_flash_init())
+        debug_trace("YAMA PSRAM unavailable; flash save support disabled");
+#else
+    debug_trace("YAMA debug plain mode: PSRAM save support skipped");
+#endif
+    msx_pio_io_bus_init();
+    i2s_audio_init();
+    multicore_launch_core1(core1_yamanooto_audio);
+    debug_trace("YAMA run_simple (plain slot, MSX-MUSIC IO only) rom_size=%lu",
+                (unsigned long)active_rom_size);
+
+    while (true)
+    {
+        uint16_t waddr;
+        uint8_t  wdata;
+        while (pio_try_get_write(&waddr, &wdata))
+            yama_mem_write(waddr, wdata);
+
+        if (!pio_sm_is_rx_fifo_empty(msx_bus.pio, msx_bus.sm_read))
+        {
+            uint16_t addr = (uint16_t)pio_sm_get(msx_bus.pio, msx_bus.sm_read);
+
+            // Drain writes that arrived while waiting
+            while (pio_try_get_write(&waddr, &wdata))
+                yama_mem_write(waddr, wdata);
+
+            uint8_t data = yama_mem_read(addr);
+            pio_sm_put_blocking(msx_bus.pio, msx_bus.sm_read, pio_build_token(true, data));
+        }
+    }
+}
+
 int __no_inline_not_in_flash_func(main)(void)
 {
     // RP2350 flash timing + system clock (same as the loadrom firmware).
     qmi_hw->m[0].timing = 0x40000202;
     set_sys_clock_khz(210000, true);
 
-    stdio_init_all();
-    debug_trace("YAMA boot USB_DEBUG=%u", (unsigned)YAMANOOTO_USB_STDIO_DEBUG);
-
     setup_gpio();
 
     // Configuration record: name(50) + type(1) + size(4) + offset(4).
     // The FM-PAC BIOS is always appended after the ROM image by the tool.
     memcpy(&active_rom_size, rom + ROM_NAME_MAX + 1, sizeof(uint32_t));
-    debug_trace("YAMA config active_rom_size=%lu", (unsigned long)active_rom_size);
 
-    yamanooto_run_fmpac();  // expanded slot: game (sub-slot 0) + FM-PAC BIOS (sub-slot 3)
+    // The config-record 'type' byte selects the FM-PAC. By default (flag clear)
+    // the cartridge is a plain, non-expanded slot exactly like the real
+    // Yamanooto. The PC tool's --fmpac option sets YAMA_MSX_MUSIC_FLAG to add
+    // the expanded slot with the FM-PAC BIOS in sub-slot 3 for FM games.
+    uint8_t config_type = rom[ROM_NAME_MAX];
+    if (config_type & YAMA_MSX_MUSIC_FLAG)
+    {
+        debug_stdio_init();
+        debug_trace("YAMA boot USB_DEBUG=%u", (unsigned)YAMANOOTO_USB_STDIO_DEBUG);
+        debug_trace("YAMA config active_rom_size=%lu", (unsigned long)active_rom_size);
+        debug_trace("YAMA MSX-MUSIC flag set: expanded slot + FM-PAC");
+        yamanooto_run_fmpac();   // expanded slot: game (sub-slot 0) + FM-PAC BIOS (sub-slot 3)
+    }
+    else
+    {
+        yamanooto_run_simple();  // plain slot: game + raw MSX-MUSIC I/O, no FM-PAC BIOS
+    }
     return 0;
 }

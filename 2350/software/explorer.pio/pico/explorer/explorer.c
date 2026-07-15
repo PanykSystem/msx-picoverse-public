@@ -3257,10 +3257,15 @@ static inline void __not_in_flash_func(prepare_rom_source)(
         // R9 frequency is set right after the BIOS boot, when the ROM's INIT
         // runs. The menu cannot do this itself because the warm RST 00h reset
         // that boots the ROM re-initializes R9. An 11-byte stub injected into
-        // the cached header writes VDP register 9 directly through port 0x99
-        // (bit 1 = 50/60Hz, other bits = the standard 192-line text default)
-        // then jumps to the original INIT. vdp_freq_launch is zeroed for system
-        // ROMs so their loaders are never touched.
+        // the cached header calls the BIOS WRTVDP routine (0x0047) with B=R9
+        // value / C=9, then jumps to the original INIT. Using WRTVDP (as the
+        // Carnivore2 boot menu does) writes VDP register 9 *and* updates the
+        // BIOS R9 shadow RG9SAV (0xFFE8) on MSX2, so games that reload R9 from
+        // the shadow via a BIOS screen call keep the requested refresh mode.
+        // This runs as the cartridge INIT with the BIOS in page 0, so the
+        // direct 0x0047 call is valid. vdp_freq_launch is zeroed for system
+        // ROMs so their loaders are never touched; the menu also zeroes the
+        // per-ROM value on MSX1 (no R9), so no MSX1 guard is needed here.
         if (vdp_freq_launch != VDP_FREQ_DEFAULT && bytes_to_cache >= 16u &&
             rom_sram[0] == 'A' && rom_sram[1] == 'B')
         {
@@ -3269,9 +3274,9 @@ static inline void __not_in_flash_func(prepare_rom_source)(
             {
                 uint8_t r9 = (vdp_freq_launch == VDP_FREQ_50HZ) ? 0x02u : 0x00u;
                 rom_sram[4] = 0x3Eu; rom_sram[5] = r9;                           // ld a,r9
-                rom_sram[6] = 0xD3u; rom_sram[7] = 0x99u;                        // out (099h),a  (VDP data)
-                rom_sram[8] = 0x3Eu; rom_sram[9] = 0x89u;                        // ld a,089h     (0x80|9)
-                rom_sram[10] = 0xD3u; rom_sram[11] = 0x99u;                      // out (099h),a  (select R9)
+                rom_sram[6] = 0x47u;                                             // ld b,a
+                rom_sram[7] = 0x0Eu; rom_sram[8] = 0x09u;                        // ld c,9
+                rom_sram[9] = 0xCDu; rom_sram[10] = 0x47u; rom_sram[11] = 0x00u; // call 0047h (WRTVDP)
                 rom_sram[12] = 0xC3u;                                            // jp orig_init
                 rom_sram[13] = (uint8_t)(orig_init & 0xFFu);
                 rom_sram[14] = (uint8_t)(orig_init >> 8);

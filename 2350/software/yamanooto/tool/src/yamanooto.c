@@ -29,7 +29,7 @@
 #include "fmpac_bios.h"
 
 #ifndef APP_VERSION
-#define APP_VERSION "v1.17"
+#define APP_VERSION "v1.18"
 #endif
 
 #define UF2FILENAME               "yamanooto.uf2"        // default UF2 output file
@@ -41,7 +41,7 @@
 #define MIN_ROM_SIZE              8192                    // Minimum sensible ROM size
 #define FLASH_START               0x10000000             // Start of flash on the Raspberry Pi Pico
 #define YAMANOOTO_ROM_TYPE        1                       // Fixed cartridge type (informational)
-#define YAMANOOTO_MSX_MUSIC_FLAG  0x20u                   // 'type' byte flag: enable MSX-MUSIC (YM2413)
+#define YAMANOOTO_MSX_MUSIC_FLAG  0x20u                   // 'type' byte flag: expanded slot + FM-PAC (YM2413)
 #define CONFIG_RECORD_SIZE        (MAX_FILE_NAME_LENGTH + 1 + sizeof(uint32_t) + sizeof(uint32_t))
 
 static uint32_t file_size(const char *filename)
@@ -83,15 +83,19 @@ static void print_usage(const char *prog)
     printf("Creates a Yamanooto flash cartridge UF2 for the MSX PICOVERSE 2350.\n\n");
     printf("Options:\n");
     printf("  -o, --output <file>   Output UF2 filename (default: %s)\n", UF2FILENAME);
+    printf("  -f, --fmpac           Enable the FM-PAC BIOS: present the cartridge as an\n");
+    printf("                        expanded slot with the MSX-MUSIC (YM2413) BIOS in\n");
+    printf("                        sub-slot 3. \n");
     printf("  -h, --help            Show this help message\n\n");
     printf("The ROM image must be a Konami-SCC / Konami-4 compatible image up to 8 MB.\n");
-    printf("SCC/SCC+, dual PSG and MSX-MUSIC (FM-PAC) are always available; the firmware\n");
-    printf("selects SCC or FM on the fly depending on what the running game drives.\n");
+    printf("By default the cartridge is a plain slot with SCC/SCC+, FMPAC I/O and dual PSG only.\n");
+    printf("Use --fmpac to add FMPAC BIOS; the firmware then selects SCC or FM on the fly.\n");
 }
 
 // Build the UF2 file: firmware + config record + ROM image + FM-PAC BIOS.
 static int create_uf2_file(const char *rom_filename, uint32_t rom_size,
-                           const char *rom_name, const char *uf2_filename)
+                           const char *rom_name, const char *uf2_filename,
+                           uint8_t type_flags)
 {
     const uint8_t *firmware_data = ___pico_yamanooto_dist_yamanooto_bin;
     const size_t firmware_size = sizeof(___pico_yamanooto_dist_yamanooto_bin);
@@ -104,7 +108,7 @@ static int create_uf2_file(const char *rom_filename, uint32_t rom_size,
     uint8_t config_record[CONFIG_RECORD_SIZE];
     memset(config_record, 0, sizeof(config_record));
 
-    uint8_t rom_type = YAMANOOTO_ROM_TYPE;
+    uint8_t rom_type = (uint8_t)(YAMANOOTO_ROM_TYPE | type_flags);
     uint32_t base_offset = 0;
 
     size_t cursor = 0;
@@ -233,6 +237,7 @@ int main(int argc, char *argv[])
 
     const char *output_filename = UF2FILENAME;
     const char *rom_filename = NULL;
+    uint8_t type_flags = 0;
 
     for (int i = 1; i < argc; ++i)
     {
@@ -249,6 +254,10 @@ int main(int argc, char *argv[])
                 return 1;
             }
             output_filename = argv[++i];
+        }
+        else if ((strcmp(argv[i], "-f") == 0) || (strcmp(argv[i], "--fmpac") == 0))
+        {
+            type_flags |= YAMANOOTO_MSX_MUSIC_FLAG;
         }
         else if (argv[i][0] == '-')
         {
@@ -297,8 +306,17 @@ int main(int argc, char *argv[])
     printf("ROM File: %s\n", rom_filename);
     printf("ROM Name: %s\n", rom_name);
     printf("ROM Size: %u bytes\n", rom_size);
-    printf("Audio: SCC/SCC+ + dual PSG + MSX-MUSIC (FM-PAC BIOS embedded; auto SCC/FM select)\n");
+    if (type_flags & YAMANOOTO_MSX_MUSIC_FLAG)
+    {
+        printf("Audio: SCC/SCC+ + dual PSG + MSX-MUSIC (FM-PAC BIOS embedded; auto SCC/FM select)\n");
+        printf("Slot: expanded (game sub-slot 0 + FM-PAC sub-slot 3)\n");
+    }
+    else
+    {
+        printf("Audio: SCC/SCC+ + dual PSG + MSX-MUSIC raw I/O (no FM-PAC BIOS)\n");
+        printf("Slot: plain (non-expanded), like real Yamanooto hardware\n");
+    }
     printf("UF2 Output: %s\n", output_filename);
 
-    return create_uf2_file(rom_filename, rom_size, rom_name, output_filename);
+    return create_uf2_file(rom_filename, rom_size, rom_name, output_filename, type_flags);
 }

@@ -233,7 +233,10 @@ void show_rom_screen(unsigned int index) {
     unsigned char allow_wifi_support = record_is_wifi_capable_system_rom(record);
     unsigned char allow_sd_partition = record_is_sunrise_sd_system_rom(record);
     unsigned char allow_psg = !record_is_sunrise_mapper_system_rom(record);
-    unsigned char allow_freq = !record_is_system_rom(record);
+    /* VDP R9 (50/60Hz) exists only on the V9938/V9958 (MSX2+). The MSX version
+       byte at main-ROM 0x002D is 0 on MSX1, so the frequency option is offered
+       only when it is non-zero. */
+    unsigned char allow_freq = !record_is_system_rom(record) && (Peek(0x002D) != 0);
     unsigned char wifi_enabled = 0;
     int volume_selection = 2;
     int psg_selection = 3;
@@ -308,7 +311,7 @@ void show_rom_screen(unsigned int index) {
                     Poke(CTRL_WIFI_SUPPORT, allow_wifi_support ? wifi_enabled : 0);
                     Poke(CTRL_SD_PARTITION, allow_sd_partition ? sd_partition : 0);
                     Poke(CTRL_AUDIO_VOLUME, rom_audio_volume);
-                    send_save_options(index, audio_profile, psg_enabled, record_mapper_code(record->Mapper), allow_sd_partition ? sd_partition : 0, rom_audio_volume, rom_vdp_freq);
+                    send_save_options(index, audio_profile, psg_enabled, record_mapper_code(record->Mapper), allow_sd_partition ? sd_partition : 0, rom_audio_volume, allow_freq ? rom_vdp_freq : VDP_FREQ_DEFAULT);
                     loadGame((int)index);
                     return;
                 }

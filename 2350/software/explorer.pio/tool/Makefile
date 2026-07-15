@@ -33,7 +33,7 @@ CCFLAGS := -g
 endif
 
 # Application metadata
-VERSION ?= v2.40
+VERSION ?= v2.41
 
 # Project files
 SOURCES := explorer.c

@@ -1,5 +1,12 @@
 # Change Log
 
+## PicoVerse 2350 Explorer v2.41
+
+- Bumped Explorer version to v2.41.
+- Changed the per-ROM 50/60Hz INIT stub to call the BIOS `WRTVDP` routine (0x0047) instead of a raw port 0x99 VDP register write, following the Carnivore2 boot-menu pattern. On MSX2 `WRTVDP` updates both VDP register 9 and its BIOS shadow `RG9SAV` (0xFFE8), so games that reload R9 from the shadow via a BIOS screen call keep the requested refresh mode (better compatibility).
+- Restricted the `Frequency` option to MSX2/MSX2+ machines: VDP R9 only exists on the V9938/V9958, so the option is hidden on MSX1 (main-ROM version byte 0x002D = 0) and the launch forces the applied value to `Default` there, preventing a stray R9 write from corrupting the TMS9918 registers.
+- Updated the `docs/msx-picoverse-2350-50-60hz.md` implementation document for the `WRTVDP`-based stub and the MSX2+ restriction, and credited the Carnivore2 (RBSC) boot menu as the reference for that technique.
+
 ## PicoVerse 2350 Explorer v2.40
 
 - Bumped Explorer version to v2.40.
