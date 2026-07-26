@@ -27,17 +27,17 @@
 #include "hardware/structs/qmi.h"
 #include "hardware/structs/xip_ctrl.h"
 #include "loadrom.h"
-#include "emu2212.h"
-#include "emu2149.h"
-#include "emu2413.h"
+#include "audio/emu2212.h"
+#include "audio/emu2149.h"
+#include "audio/emu2413.h"
 #include "msx_bus.pio.h"
 #include "hardware/uart.h"
 #include "hardware/gpio.h"
 #include "hardware/irq.h"
 #include "pico/audio_i2s.h"
-#include "sunrise_ide.h"
-#include "sunrise_sd.h"
-#include "c2_emu.h"
+#include "storage/sunrise_ide.h"
+#include "storage/sunrise_sd.h"
+#include "memory/c2_emu.h"
 
 // -----------------------------------------------------------------------
 // PIO bus context

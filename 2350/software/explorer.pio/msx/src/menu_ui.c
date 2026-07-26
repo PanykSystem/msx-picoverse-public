@@ -1,3 +1,12 @@
+// MSX PICOVERSE PROJECT
+// (c) 2026 Cristiano Goncalves
+// The Retro Hacker
+//
+// menu_ui.c - MSX Explorer menu screen rendering and text-mode handling
+//
+// This work is licensed  under a "Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International
+// License". https://creativecommons.org/licenses/by-nc-sa/4.0/
+
 #include <string.h>
 #include <stdint.h>
 #include "menu_ui.h"

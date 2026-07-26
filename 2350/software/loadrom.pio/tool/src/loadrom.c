@@ -30,6 +30,8 @@
 #include "fmpac_bios.h"
 #include "opl4_fw.h"
 #include "yrw801_rom.h"
+#include "msxaudio_fw.h"
+#include "msxaudio_bios.h"
 #include "sha1.h"
 #include "romdb.h"
 
@@ -410,7 +412,7 @@ static void print_usage(const char *prog_name) {
     size_t i;
     bool first = true;
 
-    printf("Usage: %s [-h] [-s1] [-m1] [-r1] [-s2] [-m2] [-r2] [-c1] [-c2] [-4] [-w] [-d] [-f] [-scc] [-sccplus] [-o <filename>] [romfile]\n", prog_name);
+    printf("Usage: %s [-h] [-s1] [-m1] [-r1] [-s2] [-m2] [-r2] [-c1] [-c2] [-4] [-a] [--4mhz] [-w] [-d] [-f] [-scc] [-sccplus] [-o <filename>] [romfile]\n", prog_name);
     printf("\n");
     printf("Options:\n");
     printf("  -h, --help         Show this help message\n");
@@ -425,6 +427,8 @@ static void print_usage(const char *prog_name) {
     printf("  -4, --opl4         Build UF2 with the standalone OPL4 / YMF278B / MoonSound cartridge firmware (2MB YRW801-M ROM + 2MB PCM sample RAM)\n");
     printf("      --opl4-limit   (with -4) Enable the adaptive PCM voice limiter: sheds PCM voices on extreme-polyphony songs to avoid audio underrun\n");
     printf("      --lowclock     (with -4) Build an OPL4 image that runs the RP2350 at 282 MHz instead of the default 300 MHz\n");
+    printf("  -a, --msx-audio    Build UF2 with the standalone MSX-AUDIO / Y8950 cartridge firmware (MSX-Audio BIOS + 256KB ADPCM sample RAM)\n");
+    printf("      --4mhz         (with -a) Clock the emulated Y8950 at 4 MHz instead of the standard 3.579545 MHz\n");
     printf("  -w, --wifi         Enable ESP-01 WiFi support for Sunrise IDE Nextor modes (-s1/-m1/-s2/-m2 only)\n");
     printf("  -d, --dual-psg     Enable secondary PSG emulation on I/O ports 0x10/0x11\n");
     printf("  -f, -fmpac         Enable MSX-MUSIC/YM2413 emulation on I/O ports 0x7C/0x7D\n");
@@ -609,6 +613,8 @@ int main(int argc, char *argv[])
     bool use_opl4 = false;
     bool opl4_limit = false;
     bool opl4_lowclock = false;
+    bool use_msx_audio = false;
+    bool msx_audio_4mhz = false;
     bool use_wifi = false;
     bool dual_psg = false;
     bool msx_music = false;
@@ -641,6 +647,10 @@ int main(int argc, char *argv[])
             opl4_limit = true;
         } else if (strcmp(argv[i], "--lowclock") == 0) {
             opl4_lowclock = true;
+        } else if ((strcmp(argv[i], "-a") == 0) || (strcmp(argv[i], "--msx-audio") == 0)) {
+            use_msx_audio = true;
+        } else if (strcmp(argv[i], "--4mhz") == 0) {
+            msx_audio_4mhz = true;
         } else if ((strcmp(argv[i], "-w") == 0) || (strcmp(argv[i], "--wifi") == 0)) {
             use_wifi = true;
         } else if ((strcmp(argv[i], "-d") == 0) || (strcmp(argv[i], "--dual-psg") == 0)) {
@@ -690,6 +700,117 @@ int main(int argc, char *argv[])
         printf("Option --lowclock requires -4/--opl4.\n");
         return 1;
     }
+    if (use_opl4 && use_msx_audio) {
+        printf("Options -4/--opl4 and -a/--msx-audio are mutually exclusive.\n");
+        return 1;
+    }
+    if (msx_audio_4mhz && !use_msx_audio) {
+        printf("Option --4mhz requires -a/--msx-audio.\n");
+        return 1;
+    }
+
+    // -------------------------------------------------------------------
+    // Standalone MSX-AUDIO / Y8950 cartridge (-a / --msx-audio)
+    // -------------------------------------------------------------------
+    // Writes a firmware-only UF2 laid out as
+    //   [msxaudio.bin][16-byte "PVAU" config header][48KB MSX-Audio BIOS ROM]
+    // The firmware finds the config header at __flash_binary_end and the BIOS
+    // ROM immediately after it. The emulated cartridge follows the openMSX
+    // "Philips/MSXPro MSX-Audio" extension (Boosted_audio.xml): a Y8950 on
+    // ports 0xC0/0xC1 with 256KB of ADPCM sample RAM, the MSX-Audio BIOS
+    // mapped as a plain Normal0000 ROM, and the two 4KB work RAM blocks.
+    if (use_msx_audio) {
+        if (use_nextor || dual_psg || msx_music || scc_emulation || scc_plus
+            || use_wifi || rom_filename) {
+            printf("Option -a/--msx-audio is standalone and cannot be combined with other modes or a ROM file.\n");
+            return 1;
+        }
+
+        const uint8_t *fw_data = ___pico_msxaudio_dist_msxaudio_bin;
+        const size_t fw_size = sizeof(___pico_msxaudio_dist_msxaudio_bin);
+        const uint8_t *bios_data = ___resources_MSXAUDIO_NMS1205_ROM;
+        const size_t bios_size = (size_t)___resources_MSXAUDIO_NMS1205_ROM_len;
+
+        uint8_t cfg_header[16];
+        memset(cfg_header, 0, sizeof(cfg_header));
+        cfg_header[0] = 'P'; cfg_header[1] = 'V'; cfg_header[2] = 'A'; cfg_header[3] = 'U';
+        cfg_header[4] = (uint8_t)(msx_audio_4mhz ? 0x01u : 0x00u);
+        const size_t cfg_size = sizeof(cfg_header);
+
+        printf("Mode: MSX-AUDIO / Y8950 (dedicated cartridge)\n");
+        printf("Firmware Size: %zu bytes\n", fw_size);
+        printf("MSX-Audio BIOS ROM Size: %zu bytes\n", bios_size);
+        printf("Y8950 ports: 0xC0 / 0xC1\n");
+        printf("ADPCM sample RAM: 256 KB (external PSRAM)\n");
+        printf("Y8950 clock: %s\n", msx_audio_4mhz ? "4 MHz" : "3.579545 MHz (standard)");
+        printf("Sample rate: %u Hz (Y8950 native)\n", msx_audio_4mhz ? 55555u : 49716u);
+        printf("UF2 Output: %s\n", output_filename);
+
+        FILE *uf2_file = fopen(output_filename, "wb");
+        if (!uf2_file) {
+            perror("Failed to create UF2 file");
+            return 1;
+        }
+
+        const size_t total_size = fw_size + cfg_size + bios_size;
+
+        UF2_Block bl;
+        memset(&bl, 0, sizeof(bl));
+        bl.magicStart0 = UF2_MAGIC_START0;
+        bl.magicStart1 = UF2_MAGIC_START1;
+        bl.flags = UF2_FLAG_FAMILYID_PRESENT;
+        bl.magicEnd = UF2_MAGIC_END;
+        bl.targetAddr = FLASH_START;
+        bl.payloadSize = 256;
+        bl.numBlocks = (uint32_t)((total_size + bl.payloadSize - 1) / bl.payloadSize);
+        bl.fileSize = RP2350_FAMILY_ID;
+
+        size_t fw_off = 0;
+        size_t cfg_off = 0;
+        size_t bios_off = 0;
+        size_t total_written = 0;
+        uint32_t block_no = 0;
+        while (total_written < total_size) {
+            memset(bl.data, 0, sizeof(bl.data));
+            size_t chunk_filled = 0;
+
+            while (chunk_filled < bl.payloadSize && total_written < total_size) {
+                size_t to_copy;
+                size_t space = bl.payloadSize - chunk_filled;
+                if (fw_off < fw_size) {
+                    size_t remaining = fw_size - fw_off;
+                    to_copy = remaining < space ? remaining : space;
+                    memcpy(bl.data + chunk_filled, fw_data + fw_off, to_copy);
+                    fw_off += to_copy;
+                } else if (cfg_off < cfg_size) {
+                    size_t remaining = cfg_size - cfg_off;
+                    to_copy = remaining < space ? remaining : space;
+                    memcpy(bl.data + chunk_filled, cfg_header + cfg_off, to_copy);
+                    cfg_off += to_copy;
+                } else {
+                    size_t remaining = bios_size - bios_off;
+                    to_copy = remaining < space ? remaining : space;
+                    memcpy(bl.data + chunk_filled, bios_data + bios_off, to_copy);
+                    bios_off += to_copy;
+                }
+                chunk_filled += to_copy;
+                total_written += to_copy;
+            }
+
+            bl.blockNo = block_no++;
+            if (fwrite(&bl, 1, sizeof(bl), uf2_file) != sizeof(bl)) {
+                printf("Failed to write UF2 block %u.\n", block_no - 1);
+                fclose(uf2_file);
+                return 1;
+            }
+            bl.targetAddr += bl.payloadSize;
+        }
+
+        fclose(uf2_file);
+        printf("\nSuccessfully wrote %u blocks to %s.\n", block_no, output_filename);
+        return 0;
+    }
+
     // -------------------------------------------------------------------
     // Standalone OPL4 / MoonSound cartridge (-4 / --opl4)
     // -------------------------------------------------------------------
@@ -821,8 +942,8 @@ int main(int argc, char *argv[])
             return 1;
         }
 
-        const uint8_t *sunrise_rom = ___nextor_kernel_Nextor_2_1_4_SunriseIDE_MasterOnly_ROM;
-        uint32_t sunrise_rom_size = (uint32_t)___nextor_kernel_Nextor_2_1_4_SunriseIDE_MasterOnly_ROM_len;
+        const uint8_t *sunrise_rom = ___resources_Nextor_2_1_4_SunriseIDE_MasterOnly_ROM;
+        uint32_t sunrise_rom_size = (uint32_t)___resources_Nextor_2_1_4_SunriseIDE_MasterOnly_ROM_len;
         const uint8_t *wifi_rom = NULL;
         uint32_t wifi_rom_size = 0u;
         uint8_t rom_type;

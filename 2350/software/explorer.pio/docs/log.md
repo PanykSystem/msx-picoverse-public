@@ -3,10 +3,12 @@
 ## PicoVerse 2350 Explorer v2.42
 
 - Bumped Explorer version to v2.42.
+- Reorganized `pico/explorer` sources into per-type subfolders: `audio/` (`emu2149`, `emu2151` + its `ymfm/` library, `emu2212`, `emu2413`, `mp3`), `memory/` (`c2_emu`, the Carnivore2-style mapper/RAM emulation), and `storage/` (`hw_config.c`, `sunrise_ide`, `sunrise_sd`), updating `CMakeLists.txt` and `explorer.c` includes accordingly. Verified with a full reconfigure and clean rebuild.
 - Deleted a ROM's associated `.PVC` options file when the ROM is deleted from microSD, while continuing normally when no options file exists.
 - Stamped FileHunter ROM downloads with the HTTP `Last-Modified` time, falling back to the response `Date`, instead of leaving a null microSD file timestamp.
 - Fixed FileHunter showing `Network: Offline` after successfully loading its online catalog by retaining successful HTTP connectivity when the ESP8266 AP-status query cannot return an SSID.
 - Removed the FileHunter `Network: Online`/`Network: Offline` footer and its redundant Wi-Fi status probes from the MSX menu to reduce ROM usage.
+- Updated the public README per-ROM 50/60 Hz credit paragraph to also acknowledge the Carnivore2 (RBSC) boot-menu strategy used as a reference for the BIOS `WRTVDP` / `RG9SAV` application technique and the MSX2+ restriction.
 
 ## PicoVerse 2350 Explorer v2.41
 

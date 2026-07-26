@@ -1,3 +1,12 @@
+// MSX PICOVERSE PROJECT
+// (c) 2026 Cristiano Goncalves
+// The Retro Hacker
+//
+// menu_state.h - Public interface for shared MSX Explorer menu state
+//
+// This work is licensed  under a "Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International
+// License". https://creativecommons.org/licenses/by-nc-sa/4.0/
+
 #ifndef MENU_STATE_H
 #define MENU_STATE_H
 

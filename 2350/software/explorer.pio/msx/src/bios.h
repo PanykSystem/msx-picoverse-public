@@ -1,5 +1,5 @@
 // MSX PICOVERSE PROJECT
-// (c) 2025 Cristiano Goncalves
+// (c) 2026 Cristiano Goncalves
 // The Retro Hacker
 //
 // bios.h - MSX BIOS symbols used by PicoVerse

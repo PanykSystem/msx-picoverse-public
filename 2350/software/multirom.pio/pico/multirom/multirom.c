@@ -29,10 +29,10 @@
 #include "hardware/irq.h"
 #include "hw_config.h"
 #include "multirom.h"
-#include "sunrise_ide.h"
-#include "sunrise_sd.h"
-#include "emu2212.h"
-#include "c2_emu.h"
+#include "storage/sunrise_ide.h"
+#include "storage/sunrise_sd.h"
+#include "audio/emu2212.h"
+#include "memory/c2_emu.h"
 #include "msx_bus.pio.h"
 
 // config area and buffer for the ROM data

@@ -1,3 +1,12 @@
+// MSX PICOVERSE PROJECT
+// (c) 2026 Cristiano Goncalves
+// The Retro Hacker
+//
+// explorer_fh.c - MSX Explorer File Hunter (online ROM catalog) client
+//
+// This work is licensed  under a "Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International
+// License". https://creativecommons.org/licenses/by-nc-sa/4.0/
+
 #include <string.h>
 #include <stdio.h>
 #include "menu.h"

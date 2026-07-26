@@ -41,11 +41,11 @@ pico_sdk_init()
 # Add executable. Default name is the project name, version 0.1
 add_executable(multirom 
         ${PICO_SDK_PATH}/lib/tinyusb/src/tusb.c
-        hw_config.c
-        emu2212.c
-        sunrise_ide.c
-        sunrise_sd.c
-        c2_emu.c
+        storage/hw_config.c
+        audio/emu2212.c
+        storage/sunrise_ide.c
+        storage/sunrise_sd.c
+        memory/c2_emu.c
         multirom.c 
 )
 

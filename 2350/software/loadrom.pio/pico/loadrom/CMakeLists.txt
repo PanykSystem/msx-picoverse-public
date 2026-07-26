@@ -51,17 +51,17 @@ add_subdirectory(lib/no-OS-FatFS-SD-SDIO-SPI-RPi-Pico/src build_sd_lib)
 add_executable(loadrom 
     ${PICO_SDK_PATH}/lib/tinyusb/src/tusb.c
     loadrom.c 
-    emu2212.c
-    emu2149.c
-    emu2413.c
-    sunrise_ide.c
-    sunrise_sd.c
-    c2_emu.c
-    hw_config.c
+    audio/emu2212.c
+    audio/emu2149.c
+    audio/emu2413.c
+    memory/c2_emu.c
+    storage/sunrise_ide.c
+    storage/sunrise_sd.c
+    storage/hw_config.c
     )
 
 pico_generate_pio_header(loadrom ${CMAKE_CURRENT_LIST_DIR}/msx_bus.pio)
-# wifi_uart.pio dropped: the ESP-01 UART now uses the hardware UART1
+# wifi_uart.pio removed: the ESP-01 UART now uses the hardware UART1
 # peripheral on GPIO38/39 (FUNCSEL=11=GPIO_FUNC_UART_AUX).
 
 pico_set_program_name(loadrom "loadrom")

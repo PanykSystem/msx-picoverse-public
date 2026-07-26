@@ -1,5 +1,20 @@
 # Change Log
 
+## PicoVerse 2350 Loadrom v2.69
+
+- Bumped the loadrom build version to v2.69 (top-level and tool Makefiles) and added the `msxaudio` build target, with `tool` depending on it.
+- Reorganized `pico/loadrom` sources into per-type subfolders: `audio/` (`emu2149`, `emu2212`, `emu2413`), `memory/` (`c2_emu`, the Carnivore2-style mapper/RAM emulation), and `storage/` (`hw_config`, `sunrise_ide`, `sunrise_sd`), updating `CMakeLists.txt` and `loadrom.c` includes accordingly. Verified with a full reconfigure and rebuild.
+- Removed the unused `wifi_uart.pio` PIO program (superseded by the hardware UART1 ESP-01 backend) and updated the `CMakeLists.txt` comment accordingly.
+- Moved `nextor/kernel/Nextor-2.1.4.SunriseIDE.MasterOnly.ROM` into `resources/`, updated the `NEXTOR_SUNRISE` path in `tool/Makefile`, and fixed the resulting `xxd`-generated embed symbol names in `tool/src/loadrom.c`.
+- Added a new standalone MSX-AUDIO (Yamaha Y8950) cartridge firmware, selectable with the new `-a` / `--msx-audio` tool option. The cartridge emulates a Y8950 on I/O ports 0xC0/0xC1 with 256KB of ADPCM sample RAM and exposes the MSX-Audio BIOS in its own slot, so MSX-AUDIO software runs on real hardware without an original card. The option is standalone and cannot be combined with any other mode or a ROM file. Issue #25.
+- Used the BSD-licensed ymfm `y8950` core for the emulation, kept as a private copy under the new firmware so it does not share sources with the standalone OPL4 firmware. Fixed an upstream ymfm defect that made ADPCM sample RAM read-backs always return 0.
+- Added Y8950 FM timer interrupts through the MSX `/INT` line so timer-paced MSX-AUDIO replayers run at the correct tempo, and drove `/BUSDIR` during MSX-AUDIO port reads to avoid bus contention when a second cartridge is installed.
+- Added the MSX-AUDIO-only `--4mhz` option, which clocks the emulated Y8950 at 4 MHz instead of the standard 3.579545 MHz. Partially related to issue #33.
+- Fixed MSX-AUDIO instruments sounding harsher and different from openMSX on some games (reported with "Wolf of the Battlefield - Commando"). The emulated Y8950 output already leaves the sound core as a full-scale, DAC-clipped 16-bit sample, so the extra 1.5x volume boost that the other PicoVerse audio profiles use was clipping it a second time on loud passages and adding distortion harmonics. The MSX-AUDIO output now runs at unity gain.
+- Added `docs/msx-picoverse-2350-msx-audio.md` with the full MSX-AUDIO implementation documentation.
+- Documented the standalone MSX-AUDIO (`-a`, `--4mhz`) and OPL4 / MoonSound (`-4`, `--opl4-limit`, `--lowclock`) builds in `docs/msx-picoverse-2350-features.md`, `docs/msx-picoverse-2350-loadrom-tool-manual.en-us.md`, and `docs/msx-picoverse-public-readme.md`, including slot/port maps, sample RAM, `/INT` timer behavior, output rates, standalone mutual-exclusion rules, troubleshooting rows, and MSX-AUDIO credits. Also corrected the manual's stale OPL4 `--22khz` option, which no longer exists in the tool.
+- Known limitations: the Philips NMS-1205 MIDI interface and the Music Module's 8-bit DAC on port 0x0A are not emulated.
+
 ## PicoVerse 2350 Loadrom v2.68
 
 - Removed the OPL4-only `--22khz` build option and its alternate 22050 Hz standalone firmware payload after validation showed missing instruments and notes in OPL4 playback. The tool now always packages the default 44100 Hz standalone OPL4 firmware for `-4` / `--opl4` images.

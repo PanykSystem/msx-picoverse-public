@@ -44,17 +44,17 @@ set(EXPLORER_USB_STDIO_DEBUG 0)
 
 # Add executable. Default name is the project name, version 0.1
 set(EXPLORER_SOURCES
-    hw_config.c
-    sunrise_ide.c
-    sunrise_sd.c
-    c2_emu.c
+    storage/hw_config.c
+    storage/sunrise_ide.c
+    storage/sunrise_sd.c
+    memory/c2_emu.c
     explorer.c 
-    mp3.c
-    emu2212.c
-    emu2149.c
-    emu2413.c
-    emu2151.cpp
-    ymfm/ymfm_opm.cpp
+    audio/mp3.c
+    audio/emu2212.c
+    audio/emu2149.c
+    audio/emu2413.c
+    audio/emu2151.cpp
+    audio/ymfm/ymfm_opm.cpp
     msx_bus.pio
 )
 

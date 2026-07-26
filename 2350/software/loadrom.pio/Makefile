@@ -9,7 +9,7 @@
 ######################################################################
 
 # Shared version (can be overridden on the command line)
-VERSION ?= v2.68
+VERSION ?= v2.69
 
 # Paths
 PICO_DIR := pico/loadrom
@@ -18,6 +18,9 @@ PICO_CONFIG := $(PICO_BUILD)/CMakeCache.txt
 OPL4_DIR := pico/opl4
 OPL4_BUILD := $(OPL4_DIR)/build
 OPL4_CONFIG := $(OPL4_BUILD)/CMakeCache.txt
+MSXAUDIO_DIR := pico/msxaudio
+MSXAUDIO_BUILD := $(MSXAUDIO_DIR)/build
+MSXAUDIO_CONFIG := $(MSXAUDIO_BUILD)/CMakeCache.txt
 TOOL_DIR := tool
 WIFI_DIR := ../wifi
 WIFI_BIOS_DIR := $(WIFI_DIR)/bios
@@ -38,9 +41,9 @@ CMAKE_MAKE_PROGRAM_FLAG := $(if $(CMAKE_MAKE_PROGRAM),-DCMAKE_MAKE_PROGRAM="$(CM
 # Make options
 MAKE ?= make
 
-.PHONY: all bios updater firmware opl4 tool clean
+.PHONY: all bios updater firmware opl4 msxaudio tool clean
 
-all: bios updater firmware opl4 tool
+all: bios updater firmware opl4 msxaudio tool
 
 bios:
 	@echo "Building WiFi BIOS ROM"
@@ -60,7 +63,14 @@ opl4: $(OPL4_CONFIG)
 $(OPL4_CONFIG):
 	@$(CMAKE) $(CMAKE_GENERATOR_FLAG) $(CMAKE_MAKE_PROGRAM_FLAG) -S "$(OPL4_DIR)" -B "$(OPL4_BUILD)" -DCMAKE_BUILD_TYPE=$(CMAKE_BUILD_TYPE)
 
-tool: bios opl4
+msxaudio: $(MSXAUDIO_CONFIG)
+	@echo "Building standalone MSX-AUDIO firmware"
+	@$(CMAKE) --build "$(MSXAUDIO_BUILD)"
+
+$(MSXAUDIO_CONFIG):
+	@$(CMAKE) $(CMAKE_GENERATOR_FLAG) $(CMAKE_MAKE_PROGRAM_FLAG) -S "$(MSXAUDIO_DIR)" -B "$(MSXAUDIO_BUILD)" -DCMAKE_BUILD_TYPE=$(CMAKE_BUILD_TYPE)
+
+tool: bios opl4 msxaudio
 	@echo "Building PC tool"
 	@"$(MAKE)" -C "$(TOOL_DIR)" VERSION=$(VERSION)
 
@@ -72,3 +82,5 @@ clean:
 	@$(CMAKE) -E rm -rf "$(PICO_BUILD)"
 	@$(CMAKE) --build "$(OPL4_BUILD)" --target clean || true
 	@$(CMAKE) -E rm -rf "$(OPL4_BUILD)"
+	@$(CMAKE) --build "$(MSXAUDIO_BUILD)" --target clean || true
+	@$(CMAKE) -E rm -rf "$(MSXAUDIO_BUILD)"

@@ -24,6 +24,8 @@ If you find any issues, have questions, or want to contribute, please open an is
 - Carnivore2-compatible RAM-mode loader on PicoVerse 2350 (`loadrom.exe -c1` / `loadrom.exe -c2`) for `SROM.COM /D15` uploads into the 1MB PSRAM mapper.
 - ESP-01 WiFi support for PicoVerse 2350 Sunrise IDE LoadROM/MultiROM builds (`loadrom.exe -s1 -w`, `-m1 -w`, `-s2 -w`, `-m2 -w`) and for the Explorer File Hunter browser. Compatible with both real MSX hardware and FPGA-based MSX cores.
 - SCC/SCC+, Dual PSG, MSX-MUSIC/YM2413, and YM2151/SFG emulation on the PicoVerse 2350, with per-ROM audio profile selection where supported.
+- OPL4 / YMF278B / MoonSound emulation on the PicoVerse 2350 (`loadrom.exe -4`) — a standalone sound cartridge with OPL3 FM (18 channels), the 24-voice PCM wavetable, the embedded 2 MB YRW801-M wave ROM, and 2 MB of PCM sample RAM on the standard MoonSound ports.
+- MSX-AUDIO / Yamaha Y8950 emulation on the PicoVerse 2350 (`loadrom.exe -a`) — a standalone MSX-AUDIO card with OPL1 FM plus ADPCM, 256 KB of ADPCM sample RAM, and the MSX-Audio BIOS mapped in the cartridge slot.
 - Yamanooto flash-cartridge emulation on the PicoVerse 2350 (`yamanooto.exe`) — a Konami-SCC compatible 8 MB flash cartridge with SCC/SCC+, a secondary (dual) PSG, a primary PSG mirror, and MSX-MUSIC/FM-PAC, all always available with the firmware selecting SCC, FM, or pure PSG on the fly so one image can mix SCC, FM, and PSG games.
 - PC-side tooling that generates UF2 images locally for quick drag-and-drop flashing.
 - USB keyboard support on PicoVerse 2040 — use a standard USB keyboard as the MSX keyboard via the cartridge slot.
@@ -54,6 +56,8 @@ If you find any issues, have questions, or want to contribute, please open an is
 - [PicoVerse 2350 Features Overview](/docs/msx-picoverse-2350-features.md)
 - [MSX PicoVerse 2350 Dual PSG Implementation](/docs/msx-picoverse-2350-dualpsg.md)
 - [MSX PicoVerse 2350 MSX-MUSIC/FM-PAC Implementation](/docs/msx-picoverse-2350-fmpac.md)
+- [MSX PicoVerse 2350 OPL4 / YMF278B / MoonSound Implementation](/docs/msx-picoverse-2350-opl4.md)
+- [MSX PicoVerse 2350 MSX-AUDIO / Y8950 Implementation](/docs/msx-picoverse-2350-msx-audio.md)
 - [MSX PicoVerse 2350 Yamanooto Implementation](/docs/msx-picoverse-2350-yamanooto.md)
 - [MSX PicoVerse 2350 MegaRAM Implementation](/docs/msx-picoverse-2350-megaram.md)
 - [MSX PicoVerse 2350 WAVEGAME Protocol and Support](/docs/msx-picoverse-2350-wavegame.md)
@@ -120,15 +124,17 @@ Interactive BOM available at [PicoVerse 2040 BOM](https://htmlpreview.github.io/
 - Sunrise IDE + 1MB mapper + 1MB MegaRAM mode provides Nextor disk access, standard mapper RAM, and a separate writable MegaRAM cartridge surface (`-r1` for microSD, `-r2` for USB).
 - Carnivore2-compatible RAM-mode loading lets `SROM.COM /D15` upload ROMs into the 1MB PSRAM mapper (`-c1` for microSD, `-c2` for USB).
 - Yamanooto flash-cartridge emulation (`yamanooto.exe`) reproduces the  Yamanooto: a Konami-SCC compatible 8 MB flash cartridge with SCC/SCC+, a secondary (dual) PSG on ports `0x10`/`0x11`, a primary PSG mirror (`0xA0`/`0xA1`), and MSX-MUSIC/FM-PAC via an expanded subslot. All engines are always available and the firmware selects SCC, FM, or pure PSG on the fly, so a single image can hold a mix of SCC, FM, and PSG games.
+- Standalone OPL4 / YMF278B / MoonSound cartridge firmware (`loadrom.exe -4`): full YMF278B emulation (OPL3 FM with 18 channels plus 24 PCM voices), the 2 MB YRW801-M wave ROM embedded in the UF2, 2 MB of PCM sample RAM in PSRAM, MoonSound ports `0xC4`-`0xC7` and `0x7E`/`0x7F`, FM timer interrupts on `/INT`, and 16-bit stereo 44.1 kHz output through the I2S DAC. Optional `--opl4-limit` adaptive PCM voice limiter and `--lowclock` 282 MHz build.
+- Standalone MSX-AUDIO / Yamaha Y8950 cartridge firmware (`loadrom.exe -a`): OPL1 FM (9 channels) plus ADPCM-B, 256 KB of ADPCM sample RAM in PSRAM, the 48 KB MSX-Audio BIOS v1.3 mapped in the slot (openMSX `Boosted_audio.xml` layout, with base and expanded work RAM), ports `0xC0`/`0xC1`, FM timer interrupts on `/INT`, and 16-bit 49716 Hz output through the I2S DAC. Optional `--4mhz` Y8950 clock.
 - LoadROM Sunrise builds can also expose ESP-01 WiFi support with `-w` on top of the `-s1`/`-m1`/`-s2`/`-m2` modes.
 - LoadROM, MultiROM, and Explorer support the Sunrise IDE options. MultiROM and Explorer allow combining them so multiple Nextor modes appear as selectable SYSTEM entries in the menu; Explorer also provides `-a` / `--allnextor` to add all embedded Nextor entries while still appending folder ROMs.
 - Shares the same ROM mapper support list as the 2040 build.
 
 #### Bill of Materials
 
-![alt text](/images/2026-02-07_19-11.png)
+![alt text](/images/2026-07-26_17-50.png)
 
-Interactive BOM available at [PicoVerse 2350 BOM](https://htmlpreview.github.io/?https://raw.githubusercontent.com/cristianoag/msx-picoverse-public/refs/heads/main/2350/hardware/MSX_PicoVerse_2350_1.0-BETA_bom.html) 
+Interactive BOM available at [PicoVerse 2350 BOM](https://htmlpreview.github.io/?https://raw.githubusercontent.com/cristianoag/msx-picoverse-public/refs/heads/main/2350/hardware/MSX_PicoVerse_2350_1.2.html) 
 
 | Reference | Description | Quantity | Link |
 | --- | --- | --- | --- |
@@ -209,6 +215,9 @@ The LoadROM tool targets situations where you want the PicoVerse to behave like 
       - Sunrise IDE + 1MB PSRAM mapper + 1MB MegaRAM (PicoVerse 2350): `loadrom.exe -r1` or `loadrom.exe -r2`
       - Sunrise IDE + WiFi (PicoVerse 2350): `loadrom.exe -s1 -w`, `loadrom.exe -s2 -w`, `loadrom.exe -m1 -w`, or `loadrom.exe -m2 -w`
       - Carnivore2-compatible RAM loader (PicoVerse 2350): `loadrom.exe -c1` or `loadrom.exe -c2`
+      - OPL4 / MoonSound standalone cartridge (PicoVerse 2350, no ROM file): `loadrom.exe -4`, optionally with `--opl4-limit` or `--lowclock`
+      - MSX-AUDIO / Y8950 standalone cartridge (PicoVerse 2350, no ROM file): `loadrom.exe -a`, optionally with `--4mhz`
+      - `-4` and `-a` are standalone builds: they take no ROM file and cannot be combined with each other or with any other mode or audio flag.
       - `-w` is currently supported only with `-s1`, `-m1`, `-s2`, or `-m2`.
    3. Observe the reported ROM name, size, mapper status (auto vs forced), and Pico offset before the UF2 is written.
    4. Put the Pico into BOOTSEL mode and copy the generated UF2 to the `RPI-RP2` drive.
@@ -288,6 +297,10 @@ The MIDI-PAC firmware and its quality improvements were developed against public
 
 **YMF278B synthesis** uses Aaron Giles' `ymfm` Yamaha sound cores, licensed under the BSD 3-Clause License, including the OPL/FM and PCM support wrapped by PicoVerse's `emu278b` interface for timer, IRQ, ROM, and sample-RAM behavior. The MoonSound/WozBlaster-compatible port map, `/BUSDIR` behavior, 2 MB YRW801-M ROM plus 2 MB RAM model, and compatibility work were informed by public technical references including the Wozblaster OPL4_Cartridge project and openMSX's OPL4 implementation. The bundled `YRW801-M` instrument ROM is a Yamaha 1993 third-party ROM payload and must be treated as copyrighted material. PicoVerse's bus firmware, cartridge integration, synchronization model, and RP2350 audio pipeline are original PicoVerse work and are licensed under CC BY-NC-SA 4.0, allowing for non-commercial use and modification with proper attribution; commercial use or resale requires explicit authorization from the author.
 
+**The MSX-AUDIO / Yamaha Y8950 implementation on PicoVerse 2350 LoadROM** (`loadrom.exe -a`) is an original PicoVerse standalone cartridge firmware written for the RP2350. Unlike the OPL4 build it answers both memory and I/O cycles: PicoVerse implements the slot memory decode for the MSX-Audio BIOS plus base and expanded work RAM, the `0xC0`/`0xC1` port handling with `/WAIT`-gated reads and `/BUSDIR` drive, Y8950 FM timer `/INT` delivery, and 256 KB of ADPCM sample RAM in PSRAM, all in a single-owner core loop feeding the I2S DAC at the Y8950 native 49716 Hz rate.
+
+**Y8950 synthesis** uses Aaron Giles' `ymfm` Yamaha sound cores (BSD 3-Clause License), specifically the `y8950` OPL1 + ADPCM-B core, timers, IRQ, busy behavior, and I/O pins. The cartridge model \u2014 slot memory map, `Normal0000` BIOS layout, work-RAM mirrors, status-bit behavior, and the 256 KB SampleRAM configuration \u2014 reproduces the openMSX extension `Boosted_audio.xml` ("MSX-Audio" by Philips/MSXPro) and openMSX's `MSXAudio` / `Y8950Periphery` implementations, used as a hardware-behavior reference only (openMSX is GPLv2+). The bundled `MSXAUDIO_NMS1205.ROM` is the MSX-Audio BIOS v1.3 for the Philips NMS-1205 and is a third-party copyrighted BIOS payload. PicoVerse's bus firmware, decode tables, synchronization model, and RP2350 audio pipeline are original PicoVerse work licensed under CC BY-NC-SA 4.0.
+
 **MSX-MIDI Interface:**  
 The MSX-MIDI firmware was developed using the MSX-MIDI specification, USB MIDI 1.0 specification, TinyUSB host API, and reference behavior from ESEMSX3 and similar implementations. The 8251 USART emulation and standard MIDI wire protocol handling are original PicoVerse implementations.
 
@@ -308,11 +321,11 @@ Those projects remain copyright by Oduvaldo Pavan Junior and their respective co
 
 **The softwaredb database** used for ROM mapper detection is built upon contributions from across the MSX community, including the initial work by Nicolas Beyaert, later expanded by the BlueMSX Team (2004–2013) and continuously maintained by the openMSX Team (2005–present). It also incorporates MSX ID data generated by Generation MSX (www.generation-msx.nl). The latest updates are based on the awesome work by Vampier, with the database available at https://romdb.vampier.net/. Special thanks go to the Generation MSX / Sylvester project for its extensive reference data, as well as to contributors such as p_gimeno and diedel for ROM additions and validation, and GDX for further ROM information, corrections, and verification efforts. Part of openMSX effort. Available at https://github.com/openMSX
 
-**The per-ROM 50/60 Hz (VDP frequency) feature** in PicoVerse 2350 Explorer was implemented with reference to the `50-60hz` project by sdsnatcher73, which demonstrates how to switch the V9938/V9958 VDP line frequency (Register #9, PAL/NTSC bit) reliably on MSX without corrupting the screen. That project is licensed under the Apache License 2.0 and could not have been created without the help of gdx, Grauw, and NYRIKKI, as credited by its author. PicoVerse keeps its own RP2350 cartridge-side implementation (a per-ROM option persisted in `.PVC` files and applied by injecting a small VDP R9 write into the launched game's cartridge INIT), while gratefully acknowledging sdsnatcher73's reference work. Reference repository: https://github.com/sdsnatcher73/50-60hz
+**The per-ROM 50/60 Hz (VDP frequency) feature** in PicoVerse 2350 Explorer was implemented with reference to the `50-60hz` project by sdsnatcher73, which demonstrates how to switch the V9938/V9958 VDP line frequency (Register #9, PAL/NTSC bit) reliably on MSX without corrupting the screen. That project is licensed under the Apache License 2.0 and could not have been created without the help of gdx, Grauw, and NYRIKKI, as credited by its author. The application technique was further refined after studying the strategy used by the **Carnivore2** cartridge boot menu (`BOOTCMFC.ASM`, by the RBSC group): using the BIOS `WRTVDP` routine (`0x0047`) so the R9 change also updates the `RG9SAV` shadow at `0xFFE8` for better game compatibility, and restricting the frequency change to MSX2 and later machines. Only the publicly available Carnivore2 technique was used as a reference. PicoVerse keeps its own RP2350 cartridge-side implementation (a per-ROM option persisted in `.PVC` files and applied by injecting a small VDP R9 write into the launched game's cartridge INIT), while gratefully acknowledging sdsnatcher73's and RBSC's reference work. Reference repositories: https://github.com/sdsnatcher73/50-60hz and https://github.com/RBSC/Carnivore2
 
 ## Feedback & Community
 
 Questions, test reports, and build photos are welcome. Open an issue on the public repository or reach out through the MSX retro hardware forums where PicoVerse updates are posted.
 
 Author: Cristiano Goncalves
-Last updated: 07/12/2026
+Last updated: 07/26/2026

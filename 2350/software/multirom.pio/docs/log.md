@@ -1,6 +1,8 @@
 # Change Log
 
 ## PicoVerse 2350 Multirom v2.62
+- Reorganized `pico/multirom` sources into per-type subfolders: `audio/` (`emu2212`), `memory/` (`c2_emu`, the Carnivore2-style mapper/RAM emulation), and `storage/` (`hw_config.c`, `sunrise_ide`, `sunrise_sd`), updating `CMakeLists.txt` and `multirom.c` includes accordingly. Verified with a full reconfigure and rebuild.
+- Removed the unused `nextor.c`/`nextor.h` files, which were not referenced by `CMakeLists.txt` or included by any other source (dead code left over from an earlier Nextor bridge implementation superseded by `sunrise_ide.c`/`sunrise_sd.c`).
 - Fixed the PC tool mapper-detection read path to reject truncated ROM reads before hashing or scanning the allocated ROM buffer.
 - Version bumped to v2.62 (top-level, MSX, and tool Makefiles).
 
