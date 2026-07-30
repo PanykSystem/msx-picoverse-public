@@ -281,7 +281,7 @@ MP3 decoding runs on the Pico side and streams stereo PCM to the cartridge I2S D
 Selecting a ROM entry opens a ROM details screen before running:
 
 - **Mapper**: Shows the detected mapper (for SD ROMs) and allows manual override using Left/Right.
-- **Audio**: Choose an audio profile with Left/Right (None, SCC, SCC+, external SCC/SCC+, Dual PSG, MSX-MUSIC, SFG01/SFG05). The menu only cycles through profiles supported by the selected ROM mapper.
+- **Audio**: Choose an audio profile with Left/Right (None, SCC, SCC+, external SCC/SCC+, Dual PSG, MSX-MUSIC, SFG01/SFG05, SFG01/SFG05 at 4 MHz). The menu only cycles through profiles supported by the selected ROM mapper.
 - **PSG**: Choose whether to mirror the MSX primary PSG writes through the cartridge DAC. The default is Yes unless saved `.PVC` options override it.
 - **Wifi**: For standalone Sunrise Nextor and Sunrise + 1MB mapper entries only, choose whether to expose the ESP8266P WiFi BIOS before running. Carnivore2 and MegaRAM Nextor entries do not expose WiFi. The default is No.
 - **SD Part**: For Sunrise Nextor SD entries only, choose the FAT16 partition up to 4 GB that Nextor will boot from. The selected partition is saved with the ROM options.
@@ -299,6 +299,7 @@ If a ROM mapper is unknown, the screen will briefly show "Detecting..." while th
 - **SCC+ - External**: Same as **SCC - External**, but with the enhanced SCC+ register model.
 - **YM2151 (SFG05)**: Exposes a Yamaha SFG-05-like YM2151 cartridge surface and the SFG-05 BIOS image in a secondary subslot while keeping the selected game mapper in the primary game subslot. Use this for ROMs that scan another slot for SFG/YM2151 hardware.
 - **YM2151 (SFG01)**: Exposes the SFG-01 BIOS image with the same YM2151 register surface for software that distinguishes SFG01/SFG05 setups.
+- **YM2164 SFG05 4MHZ** and **YM2151 SFG01 4MHZ**: Identical to the two profiles above, except the emulated OPM/OPP core is clocked at 4 MHz instead of the MSX 3.579545 MHz clock. Because pitch, envelopes, LFO and the FM timers are all derived from the chip clock, everything plays back `4000000 / 3579545 = 1.1174x` faster. Use these for arcade conversions and music written for arcade boards, where the YM2151 is normally clocked at 4 MHz.
 - **Dual PSG**: Enables a secondary AY-3-8910 compatible PSG on I/O ports `0x10` (register select) and `0x11` (data write), matching the common Carnivore2 / MegaFlashROM / FlashJacks style second-PSG convention. Use this for ROMs or patches that explicitly support dual PSG music.
 - **MSX-MUSIC**: Enables YM2413/MSX-MUSIC audio using an FM-PAC-compatible BIOS from the Explorer UF2 flash payload. Use this for regular ROMs that can use MSX-MUSIC ports `0x7C` and `0x7D`; supported Sunrise Nextor SYSTEM entries also expose the FM-PAC BIOS in a free expanded subslot.
 

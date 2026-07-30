@@ -134,7 +134,7 @@ Interactive BOM available at [PicoVerse 2040 BOM](https://htmlpreview.github.io/
 
 ![alt text](/images/2026-07-26_17-50.png)
 
-Interactive BOM available at [PicoVerse 2350 BOM](https://htmlpreview.github.io/?https://raw.githubusercontent.com/cristianoag/msx-picoverse-public/refs/heads/main/2350/hardware/MSX_PicoVerse_2350_1.2_bom.html) 
+Interactive BOM available at [PicoVerse 2350 BOM](https://htmlpreview.github.io/?https://raw.githubusercontent.com/cristianoag/msx-picoverse-public/refs/heads/main/2350/hardware/MSX_PicoVerse_2350_1.2.html) 
 
 | Reference | Description | Quantity | Link |
 | --- | --- | --- | --- |

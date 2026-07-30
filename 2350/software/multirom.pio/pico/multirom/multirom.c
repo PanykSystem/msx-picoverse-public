@@ -577,6 +577,37 @@ static inline void __not_in_flash_func(pio_drain_writes)(void (*handler)(uint16_
     }
 }
 
+// Wait for the next memory read address, draining the write captor FIFO
+// while idle.  Mandatory for every banked mapper: game code running from
+// MSX RAM can issue long bursts of bank-switch writes without a single
+// cartridge read in between, and the write captor RX FIFO is only 8
+// entries deep.  Once it fills, the PIO stalls on "push block" and every
+// further bank switch is silently lost, leaving the mapper registers on a
+// stale segment.  Blocking on the read FIFO alone therefore drops writes.
+//
+// The idle loop reads FSTAT exactly once per iteration and tests both FIFO
+// flags from that single sample, and does nothing else.  A PIO register
+// access dominates the loop cost, so any extra work here directly stretches
+// /WAIT on every cartridge read and slows down VDP transfer loops.
+static inline uint16_t __not_in_flash_func(pio_get_read_draining_writes)(
+    void (*handler)(uint16_t addr, uint8_t data, void *ctx), void *ctx)
+{
+    PIO pio = msx_bus.pio;
+    const uint32_t read_empty  = 1u << (PIO_FSTAT_RXEMPTY_LSB + msx_bus.sm_read);
+    const uint32_t write_empty = 1u << (PIO_FSTAT_RXEMPTY_LSB + msx_bus.sm_write);
+
+    while (true)
+    {
+        uint32_t fstat = pio->fstat;
+
+        if (!(fstat & read_empty))
+            return (uint16_t)pio_sm_get(pio, msx_bus.sm_read);
+
+        if (!(fstat & write_empty))
+            pio_drain_writes(handler, ctx);
+    }
+}
+
 // -----------------------------------------------------------------------
 // PIO I/O bus initialisation (for memory mapper port access on PIO1)
 // -----------------------------------------------------------------------
@@ -933,9 +964,7 @@ static void __no_inline_not_in_flash_func(banked8_loop)(
 
     while (true)
     {
-        pio_drain_writes(write_handler, &ctx);
-
-        uint16_t addr = (uint16_t)pio_sm_get_blocking(msx_bus.pio, msx_bus.sm_read);
+        uint16_t addr = pio_get_read_draining_writes(write_handler, &ctx);
 
         pio_drain_writes(write_handler, &ctx);
 
@@ -1229,6 +1258,20 @@ void __not_in_flash_func(service_scc_audio)(void)
     give_audio_buffer(audio_pool, buffer);
 }
 
+// Bank switching + SCC register writes for loadrom_konamiscc_scc().
+// ctx points at the 4-entry bank register array.
+static inline void __not_in_flash_func(handle_konamiscc_scc_write)(uint16_t addr, uint8_t data, void *ctx)
+{
+    uint8_t *regs = (uint8_t *)ctx;
+
+    if      (addr >= 0x5000u && addr <= 0x57FFu) regs[0] = data;
+    else if (addr >= 0x7000u && addr <= 0x77FFu) regs[1] = data;
+    else if (addr >= 0x9000u && addr <= 0x97FFu) regs[2] = data;
+    else if (addr >= 0xB000u && addr <= 0xB7FFu) regs[3] = data;
+
+    SCC_write(&scc_instance, addr, data);
+}
+
 void __no_inline_not_in_flash_func(loadrom_konamiscc_scc)(uint32_t offset, bool cache_enable, uint32_t scc_type)
 {
     uint8_t bank_registers[4] = {0, 1, 2, 3};
@@ -1250,28 +1293,9 @@ void __no_inline_not_in_flash_func(loadrom_konamiscc_scc)(uint32_t offset, bool 
 
     while (true)
     {
-        uint16_t waddr;
-        uint8_t  wdata;
-        while (pio_try_get_write(&waddr, &wdata))
-        {
-            if      (waddr >= 0x5000u && waddr <= 0x57FFu) bank_registers[0] = wdata;
-            else if (waddr >= 0x7000u && waddr <= 0x77FFu) bank_registers[1] = wdata;
-            else if (waddr >= 0x9000u && waddr <= 0x97FFu) bank_registers[2] = wdata;
-            else if (waddr >= 0xB000u && waddr <= 0xB7FFu) bank_registers[3] = wdata;
+        uint16_t addr = pio_get_read_draining_writes(handle_konamiscc_scc_write, bank_registers);
 
-            SCC_write(&scc_instance, waddr, wdata);
-        }
-
-        uint16_t addr = (uint16_t)pio_sm_get_blocking(msx_bus.pio, msx_bus.sm_read);
-
-        while (pio_try_get_write(&waddr, &wdata))
-        {
-            if      (waddr >= 0x5000u && waddr <= 0x57FFu) bank_registers[0] = wdata;
-            else if (waddr >= 0x7000u && waddr <= 0x77FFu) bank_registers[1] = wdata;
-            else if (waddr >= 0x9000u && waddr <= 0x97FFu) bank_registers[2] = wdata;
-            else if (waddr >= 0xB000u && waddr <= 0xB7FFu) bank_registers[3] = wdata;
-            SCC_write(&scc_instance, waddr, wdata);
-        }
+        pio_drain_writes(handle_konamiscc_scc_write, bank_registers);
 
         bool in_window = (addr >= 0x4000u) && (addr <= 0xBFFFu);
         uint8_t data = 0xFFu;
@@ -1340,9 +1364,7 @@ void __no_inline_not_in_flash_func(loadrom_ascii16)(uint32_t offset, bool cache_
 
     while (true)
     {
-        pio_drain_writes(handle_ascii16_write, &ctx);
-
-        uint16_t addr = (uint16_t)pio_sm_get_blocking(msx_bus.pio, msx_bus.sm_read);
+        uint16_t addr = pio_get_read_draining_writes(handle_ascii16_write, &ctx);
 
         pio_drain_writes(handle_ascii16_write, &ctx);
 
@@ -1374,9 +1396,7 @@ void __no_inline_not_in_flash_func(loadrom_neo8)(uint32_t offset)
 
     while (true)
     {
-        pio_drain_writes(handle_neo8_write, &ctx);
-
-        uint16_t addr = (uint16_t)pio_sm_get_blocking(msx_bus.pio, msx_bus.sm_read);
+        uint16_t addr = pio_get_read_draining_writes(handle_neo8_write, &ctx);
 
         pio_drain_writes(handle_neo8_write, &ctx);
 
@@ -1412,9 +1432,7 @@ void __no_inline_not_in_flash_func(loadrom_neo16)(uint32_t offset)
 
     while (true)
     {
-        pio_drain_writes(handle_neo16_write, &ctx);
-
-        uint16_t addr = (uint16_t)pio_sm_get_blocking(msx_bus.pio, msx_bus.sm_read);
+        uint16_t addr = pio_get_read_draining_writes(handle_neo16_write, &ctx);
 
         pio_drain_writes(handle_neo16_write, &ctx);
 
@@ -2211,9 +2229,7 @@ void __no_inline_not_in_flash_func(loadrom_ascii16x)(uint32_t offset, bool cache
 
     while (true)
     {
-        pio_drain_writes(handle_ascii16x_write_cached, &state);
-
-        uint16_t addr = (uint16_t)pio_sm_get_blocking(msx_bus.pio, msx_bus.sm_read);
+        uint16_t addr = pio_get_read_draining_writes(handle_ascii16x_write_cached, &state);
 
         pio_drain_writes(handle_ascii16x_write_cached, &state);
 

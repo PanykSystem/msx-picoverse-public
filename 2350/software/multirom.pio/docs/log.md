@@ -1,5 +1,9 @@
 # Change Log
 
+## PicoVerse 2350 Multirom v2.63
+- Version bumped to v2.63 (top-level, MSX, and tool Makefiles).
+- Fixed banked mapper ROMs hanging when the game switches segments in bursts from MSX RAM without reading the cartridge in between. The bus loops blocked waiting for a read and let the 8-entry write FIFO overflow, silently dropping bank switches and leaving the mapper on a stale segment. All banked loops (Konami/Konami-SCC/ASCII8, Konami SCC with SCC audio, ASCII16, ASCII16-X, Neo-8, Neo-16) now drain writes while waiting for the next read, using a single `FSTAT` sample per idle iteration so the read-response latency is unchanged. Reported with "Go Figure v1.2"; same fix as PicoVerse 2350 Loadrom v2.70.
+
 ## PicoVerse 2350 Multirom v2.62
 - Reorganized `pico/multirom` sources into per-type subfolders: `audio/` (`emu2212`), `memory/` (`c2_emu`, the Carnivore2-style mapper/RAM emulation), and `storage/` (`hw_config.c`, `sunrise_ide`, `sunrise_sd`), updating `CMakeLists.txt` and `multirom.c` includes accordingly. Verified with a full reconfigure and rebuild.
 - Removed the unused `nextor.c`/`nextor.h` files, which were not referenced by `CMakeLists.txt` or included by any other source (dead code left over from an earlier Nextor bridge implementation superseded by `sunrise_ide.c`/`sunrise_sd.c`).

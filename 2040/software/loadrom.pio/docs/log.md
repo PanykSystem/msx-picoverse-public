@@ -1,5 +1,11 @@
 # Change Log
 
+## PicoVerse 2040 Loadrom v2.62
+
+- Version bumped to v2.62 (top-level and tool Makefiles).
+- Fixed lost bank-switch writes in every banked mapper loop (`banked8_loop` for Konami/Konami-SCC/ASCII8, plus ASCII16, ASCII16-X, Neo-8 and Neo-16). Those loops blocked on `pio_sm_get_blocking()` for the next cartridge read and only drained the memory write captor FIFO before and after it, so game code executing from MSX RAM that issued a burst of segment switches without any intervening cartridge read overflowed the 8-entry RX FIFO. The write state machine then stalled on `push block` and the extra switches were silently dropped, leaving the mapper register on a stale segment (and, with an ASCII16-X/Neo cache miss, forcing the bank refill to run while `/WAIT` was already asserted). Added `pio_get_read_draining_writes()`, which drains the memory write FIFO while waiting for the next read, and switched all banked loops to it. Same fix as PicoVerse 2350 Loadrom v2.70, reported with "Go Figure v1.2" (ASCII16-X), which alternates the page-1 segment twice per call from a page-3 RAM routine and hung on the palette cross-fade.
+- Kept the new idle loop at the same read-response latency as the previous blocking wait by sampling `FSTAT` once per iteration and testing the read and write RX-empty flags from that single sample. Polling the two FIFOs with separate `pio_sm_is_rx_fifo_empty()` calls doubled the PIO register accesses in the loop, which on the Cortex-M0+ stretched `/WAIT` on every cartridge read enough to slow VDP transfer loops and trigger "VDP too slow" reports in timing-sensitive games.
+
 ## PicoVerse 2040 Loadrom v2.61
 
 - Fixed the PC tool mapper-detection read path to reject truncated ROM reads before hashing or scanning the allocated ROM buffer.

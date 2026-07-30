@@ -875,7 +875,8 @@ static unsigned char audio_profile_is_supported(const ROMRecord *record, unsigne
         unsigned char mapper_code = record_mapper_code(record->Mapper);
         return mapper_code >= 19 && mapper_code <= 21;
     }
-    if (audio_profile >= AUDIO_PROFILE_YM2151_SFG05 && audio_profile <= AUDIO_PROFILE_YM2151_SFG01) {
+    if ((audio_profile >= AUDIO_PROFILE_YM2151_SFG05 && audio_profile <= AUDIO_PROFILE_YM2151_SFG01) ||
+        (audio_profile >= AUDIO_PROFILE_YM2151_SFG05_4MHZ && audio_profile <= AUDIO_PROFILE_YM2151_SFG01_4MHZ)) {
         return record_supports_msx_music(record);
     }
     if (audio_profile == AUDIO_PROFILE_DUAL_PSG) {
@@ -912,6 +913,8 @@ static unsigned char next_audio_profile(const ROMRecord *record, unsigned char a
         AUDIO_PROFILE_MEGARAM_SCC_PLUS,
         AUDIO_PROFILE_YM2151_SFG05,
         AUDIO_PROFILE_YM2151_SFG01,
+        AUDIO_PROFILE_YM2151_SFG05_4MHZ,
+        AUDIO_PROFILE_YM2151_SFG01_4MHZ,
         AUDIO_PROFILE_DUAL_PSG,
         AUDIO_PROFILE_MSX_MUSIC
     };
@@ -965,6 +968,10 @@ static void build_audio_text(const ROMRecord *record, unsigned char audio_profil
         audio_label = "YM2164 SFG05";
     } else if (audio_profile == AUDIO_PROFILE_YM2151_SFG01) {
         audio_label = "YM2151 SFG01";
+    } else if (audio_profile == AUDIO_PROFILE_YM2151_SFG05_4MHZ) {
+        audio_label = "YM2164 SFG05 4MHZ";
+    } else if (audio_profile == AUDIO_PROFILE_YM2151_SFG01_4MHZ) {
+        audio_label = "YM2151 SFG01 4MHZ";
     } else if (audio_profile == AUDIO_PROFILE_DUAL_PSG) {
         audio_label = "Dual PSG";
     } else if (audio_profile == AUDIO_PROFILE_MSX_MUSIC) {

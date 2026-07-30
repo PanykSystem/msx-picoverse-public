@@ -1,5 +1,11 @@
 # Change Log
 
+## PicoVerse 2350 Loadrom v2.70
+
+- Bumped the loadrom build version to v2.70 (top-level and tool Makefiles).
+- Fixed lost bank-switch writes in the ASCII16, ASCII16-X, Neo-8 and Neo-16 mapper loops. Those loops blocked in `pio_get_read_servicing_dual_psg()` and only drained the memory write captor FIFO *after* a cartridge read arrived, so game code executing from MSX RAM that issued a burst of segment switches without any intervening cartridge read overflowed the 8-entry RX FIFO. The write state machine then stalled on `push block` and the extra switches were silently dropped, leaving the mapper register on a stale segment (and, with an ASCII16-X cache miss, forcing the 16KB bank refill to run while `/WAIT` was already asserted). Added `pio_get_read_draining_writes()`, which services the dual-PSG I/O and drains the memory write FIFO while waiting for the next read, and switched the four loops to it. Reported with "Go Figure v1.2" (ASCII16-X), which alternates the page-1 segment twice per call from a page-3 RAM routine and hung on the palette cross-fade. The Konami/Konami-SCC/ASCII8 `banked8_loop` already drained writes while idle and was unaffected.
+- Kept the idle loop at the same read-response latency as a plain blocking wait by sampling `FSTAT` once per iteration and testing the read and write RX-empty flags from that single sample. Polling the two FIFOs with separate `pio_sm_is_rx_fifo_empty()` calls doubles the PIO register accesses in the loop, which stretches `/WAIT` on every cartridge read enough to slow VDP transfer loops and trigger "VDP too slow" reports in timing-sensitive games (observed on the RP2040 build). `banked8_loop` now shares the same helper instead of its own inline poll, so Konami/Konami-SCC/ASCII8 reads got the same latency reduction.
+
 ## PicoVerse 2350 Loadrom v2.69
 
 - Bumped the loadrom build version to v2.69 (top-level and tool Makefiles) and added the `msxaudio` build target, with `tool` depending on it.

@@ -1,5 +1,14 @@
 # Change Log
 
+## PicoVerse 2350 Explorer v2.43
+
+- Bumped Explorer version to v2.43.
+- Fixed banked mapper ROMs hanging when the game switches segments in bursts from MSX RAM without reading the cartridge in between. The bus loops blocked waiting for a read and let the 8-entry write FIFO overflow, silently dropping bank switches and leaving the mapper on a stale segment. All banked loops (Konami/Konami-SCC/ASCII8, ASCII16, ASCII16-X, Neo-8, Neo-16) now drain writes while waiting for the next read. Reported with "Go Figure v1.2"; same fix as PicoVerse 2350 Loadrom v2.70.
+- Fixed ASCII16-X being too slow to keep up with tight VDP transfer loops ("VDP too slow"). Explorer's ROM cache lives in PSRAM, so every cartridge read cost a QMI transaction while `/WAIT` was asserted. ASCII16-X now serves reads from real internal SRAM (8 x 16KB banks), borrowing the OPLL table that is idle unless MSX-MUSIC is running; with MSX-MUSIC active it falls back to the PSRAM cache. Firmware RAM usage is unchanged.
+- Trimmed the mapper bus loops so the read response is not delayed: WaveGame I/O servicing was removed from the mappers that cannot use it (ASCII16-X, Neo-8, Neo-16, Konami SCC with SCC audio).
+- Added the `YM2164 SFG05 4MHZ` and `YM2151 SFG01 4MHZ` audio profiles (profile ids 11 and 12), which reuse the existing SFG surface, BIOS image and slot layout but clock the emulated OPM/OPP core at 4 MHz so pitch, envelopes, LFO and FM timers run 1.1174x faster, matching the arcade boards most YM2151 music was written for.
+- Documented the two new profiles in the Explorer tool manual audio-profile section.
+
 ## PicoVerse 2350 Explorer v2.42
 
 - Bumped Explorer version to v2.42.

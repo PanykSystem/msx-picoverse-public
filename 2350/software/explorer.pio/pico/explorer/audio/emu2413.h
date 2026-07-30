@@ -132,6 +132,14 @@ typedef struct __OPLL {
 OPLL *OPLL_new(uint32_t clk, uint32_t rate);
 void OPLL_delete(OPLL *);
 
+/**
+ * PicoVerse Explorer extension: lend the internal 128KB tll_table as generic
+ * scratch memory while no OPLL instance is running.  Returns NULL if the
+ * requested size does not fit.  The buffer must be released before any
+ * OPLL_new() call.
+ */
+void *OPLL_borrow_table_memory(uint32_t size);
+
 void OPLL_reset(OPLL *);
 void OPLL_resetPatch(OPLL *, uint8_t);
 

@@ -219,6 +219,17 @@ static double kl_table[16] = {dB2(0.000),  dB2(9.000),  dB2(12.000), dB2(13.875)
                               dB2(19.875), dB2(20.250), dB2(20.625), dB2(21.000)};
 
 static uint32_t tll_table[8 * 16][1 << TL_BITS][4];
+
+/* PicoVerse Explorer: the 128KB tll_table is the largest block of internal
+   SRAM in the firmware and is only meaningful while an OPLL instance exists.
+   Lend it out as generic scratch memory so mapper code can use real internal
+   SRAM instead of PSRAM.  The caller must not hold the buffer across an
+   OPLL_new() / OPLL_reset() call. */
+void *OPLL_borrow_table_memory(uint32_t size) {
+  if (size > sizeof(tll_table))
+    return NULL;
+  return (void *)tll_table;
+}
 static int32_t rks_table[8 * 2][2];
 
 static OPLL_PATCH null_patch = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};

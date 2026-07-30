@@ -7,7 +7,7 @@
 ######################################################################
 
 # Shared version (can be overridden on the command line)
-VERSION ?= v2.62
+VERSION ?= v2.63
 
 # Sub-project locations
 MSX_DIR     := msx
@@ -35,7 +35,7 @@ CMAKE_MAKE_PROGRAM_FLAG := $(if $(CMAKE_MAKE_PROGRAM),-DCMAKE_MAKE_PROGRAM="$(CM
 all: tool
 
 msx:
-	$(MAKE) -C $(MSX_DIR) VERSION=$(VERSION)
+	"$(MAKE)" -C $(MSX_DIR) VERSION=$(VERSION)
 
 pico: msx $(PICO_CONFIG)
 	$(CMAKE) --build $(PICO_BUILD)
@@ -44,10 +44,10 @@ $(PICO_CONFIG):
 	$(CMAKE) $(CMAKE_GENERATOR_FLAG) $(CMAKE_MAKE_PROGRAM_FLAG) -S $(PICO_DIR) -B $(PICO_BUILD) -DCMAKE_BUILD_TYPE=$(CMAKE_BUILD_TYPE)
 
 tool: pico
-	$(MAKE) -C $(TOOL_DIR) VERSION=$(VERSION)
+	"$(MAKE)" -C $(TOOL_DIR) VERSION=$(VERSION)
 
 clean:
-	-$(MAKE) -C $(MSX_DIR) clean VERSION=$(VERSION)
+	-"$(MAKE)" -C $(MSX_DIR) clean VERSION=$(VERSION)
 	-@$(CMAKE) --build $(PICO_BUILD) --target clean
-	-$(MAKE) -C $(TOOL_DIR) clean VERSION=$(VERSION)
+	-"$(MAKE)" -C $(TOOL_DIR) clean VERSION=$(VERSION)
 	-@$(CMAKE) -E rm -rf $(PICO_BUILD)

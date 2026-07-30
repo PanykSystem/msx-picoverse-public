@@ -1070,6 +1070,41 @@ static inline uint16_t __not_in_flash_func(pio_get_read_servicing_dual_psg)(void
     return (uint16_t)pio_sm_get(msx_bus.pio, msx_bus.sm_read);
 }
 
+// Same as pio_get_read_servicing_dual_psg(), but keeps draining the memory
+// write captor FIFO while waiting for the next read.  Mandatory for every
+// banked mapper: game code running from MSX RAM can issue long bursts of
+// bank-switch writes without a single cartridge read in between, and the
+// write captor RX FIFO is only 8 entries deep.  Once it fills, the PIO
+// stalls on "push block" and every further bank switch is silently lost,
+// leaving the mapper registers on a stale segment.
+//
+// The idle loop reads FSTAT exactly once per iteration and tests both FIFO
+// flags from that single sample.  A PIO register access dominates the loop
+// cost, so polling both FIFOs separately would roughly double the /WAIT
+// stretch on every cartridge read and slow down VDP transfer loops.  One
+// FSTAT read keeps the read-response latency the same as a plain blocking
+// wait on the read FIFO.
+static inline uint16_t __not_in_flash_func(pio_get_read_draining_writes)(
+    void (*handler)(uint16_t addr, uint8_t data, void *ctx), void *ctx)
+{
+    PIO pio = msx_bus.pio;
+    const uint32_t read_empty  = 1u << (PIO_FSTAT_RXEMPTY_LSB + msx_bus.sm_read);
+    const uint32_t write_empty = 1u << (PIO_FSTAT_RXEMPTY_LSB + msx_bus.sm_write);
+
+    while (true)
+    {
+        dual_psg_service_io();
+
+        uint32_t fstat = pio->fstat;
+
+        if (!(fstat & read_empty))
+            return (uint16_t)pio_sm_get(pio, msx_bus.sm_read);
+
+        if (!(fstat & write_empty))
+            pio_drain_writes(handler, ctx);
+    }
+}
+
 static void __not_in_flash_func(msx_music_init)(void)
 {
     if (!msx_music_enabled || msx_music_ready)
@@ -1318,20 +1353,7 @@ static void __no_inline_not_in_flash_func(banked8_loop)(
 
     while (true)
     {
-        pio_drain_writes(write_handler, &ctx);
-
-        uint16_t addr;
-        while (true)
-        {
-            dual_psg_service_io();
-            pio_drain_writes(write_handler, &ctx);
-            if (!pio_sm_is_rx_fifo_empty(msx_bus.pio, msx_bus.sm_read))
-            {
-                addr = (uint16_t)pio_sm_get(msx_bus.pio, msx_bus.sm_read);
-                break;
-            }
-            tight_loop_contents();
-        }
+        uint16_t addr = pio_get_read_draining_writes(write_handler, &ctx);
 
         pio_drain_writes(write_handler, &ctx);
 
@@ -1692,9 +1714,7 @@ void __no_inline_not_in_flash_func(loadrom_ascii16)(uint32_t offset, bool cache_
 
     while (true)
     {
-        pio_drain_writes(handle_ascii16_write, &ctx);
-
-        uint16_t addr = pio_get_read_servicing_dual_psg();
+        uint16_t addr = pio_get_read_draining_writes(handle_ascii16_write, &ctx);
 
         pio_drain_writes(handle_ascii16_write, &ctx);
 
@@ -2369,9 +2389,7 @@ void __no_inline_not_in_flash_func(loadrom_neo8)(uint32_t offset)
 
     while (true)
     {
-        pio_drain_writes(handle_neo8_write, &ctx);
-
-        uint16_t addr = pio_get_read_servicing_dual_psg();
+        uint16_t addr = pio_get_read_draining_writes(handle_neo8_write, &ctx);
 
         pio_drain_writes(handle_neo8_write, &ctx);
 
@@ -2407,9 +2425,7 @@ void __no_inline_not_in_flash_func(loadrom_neo16)(uint32_t offset)
 
     while (true)
     {
-        pio_drain_writes(handle_neo16_write, &ctx);
-
-        uint16_t addr = pio_get_read_servicing_dual_psg();
+        uint16_t addr = pio_get_read_draining_writes(handle_neo16_write, &ctx);
 
         pio_drain_writes(handle_neo16_write, &ctx);
 
@@ -2761,9 +2777,7 @@ void __no_inline_not_in_flash_func(loadrom_ascii16x)(uint32_t offset, bool cache
 
     while (true)
     {
-        pio_drain_writes(handle_ascii16x_write_cached, &state);
-
-        uint16_t addr = pio_get_read_servicing_dual_psg();
+        uint16_t addr = pio_get_read_draining_writes(handle_ascii16x_write_cached, &state);
 
         pio_drain_writes(handle_ascii16x_write_cached, &state);
 

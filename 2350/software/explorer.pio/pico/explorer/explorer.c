@@ -173,6 +173,11 @@
 #define AUDIO_PROFILE_YM2151_SFG01 8u
 #define AUDIO_PROFILE_MEGARAM_SCC 9u
 #define AUDIO_PROFILE_MEGARAM_SCC_PLUS 10u
+// Same SFG05/SFG01 surfaces, but the emulated OPM/OPP core is clocked at 4 MHz
+// instead of the MSX 3.579545 MHz, matching the arcade boards most YM2151 music
+// was written for.
+#define AUDIO_PROFILE_YM2151_SFG05_4MHZ 11u
+#define AUDIO_PROFILE_YM2151_SFG01_4MHZ 12u
 
 #define PSG_SAMPLE_RATE 44100
 #define PSG_CLOCK       1789773
@@ -206,6 +211,7 @@
 
 #define YM2151_SAMPLE_RATE    44100
 #define YM2151_CLOCK          3579545u
+#define YM2151_CLOCK_4MHZ     4000000u
 #define YM2151_FRAME_DIVIDER  64u
 #define YM2151_CYCLES_PER_FRAME 1u
 #define YM2151_WRITE_APPLY_CYCLES 0u
@@ -815,6 +821,7 @@ static spin_lock_t *ym2151_lock = NULL;
 static struct audio_buffer_pool *ym2151_audio_pool;
 static bool ym2151_ready = false;
 static bool ym2151_audio_started = false;
+static uint32_t ym2151_clock_hz = YM2151_CLOCK;
 static uint32_t ym2151_clock_accum = 0;
 static int32_t ym2151_last_output[2] = {0, 0};
 static volatile uint8_t ym2151_status_latch = 0;
@@ -945,9 +952,9 @@ static audio_mode_t resolve_audio_mode(uint8_t mapper, uint8_t requested_profile
             mapper != MAPPER_C2_SD && mapper != MAPPER_C2_USB &&
             mapper != MAPPER_MEGARAM_SD && mapper != MAPPER_MEGARAM_USB)
             return AUDIO_MODE_MSX_MUSIC; // YM2413/FM-PAC only for non-mapper Sunrise Nextor options
-        if (requested_profile == AUDIO_PROFILE_YM2151_SFG05)
+        if (requested_profile == AUDIO_PROFILE_YM2151_SFG05 || requested_profile == AUDIO_PROFILE_YM2151_SFG05_4MHZ)
             return AUDIO_MODE_YM2151_SFG05;
-        if (requested_profile == AUDIO_PROFILE_YM2151_SFG01)
+        if (requested_profile == AUDIO_PROFILE_YM2151_SFG01 || requested_profile == AUDIO_PROFILE_YM2151_SFG01_4MHZ)
             return AUDIO_MODE_YM2151_SFG01;
         return AUDIO_MODE_NONE;
     }
@@ -957,10 +964,10 @@ static audio_mode_t resolve_audio_mode(uint8_t mapper, uint8_t requested_profile
     if (requested_profile == AUDIO_PROFILE_SCC_EXTERNAL) {
         return AUDIO_MODE_SCC_EXTERNAL;
     }
-    if (requested_profile == AUDIO_PROFILE_YM2151_SFG05) {
+    if (requested_profile == AUDIO_PROFILE_YM2151_SFG05 || requested_profile == AUDIO_PROFILE_YM2151_SFG05_4MHZ) {
         return AUDIO_MODE_YM2151_SFG05;
     }
-    if (requested_profile == AUDIO_PROFILE_YM2151_SFG01) {
+    if (requested_profile == AUDIO_PROFILE_YM2151_SFG01 || requested_profile == AUDIO_PROFILE_YM2151_SFG01_4MHZ) {
         return AUDIO_MODE_YM2151_SFG01;
     }
     if (is_audio_system_mapper(mapper)) {
@@ -4079,9 +4086,9 @@ static system_audio_profile_t system_audio_resolve_profile(void)
         return SYSTEM_AUDIO_PROFILE_MSX_MUSIC;
     if (ctrl_audio_selection == AUDIO_PROFILE_DUAL_PSG)
         return SYSTEM_AUDIO_PROFILE_DUAL_PSG;
-    if (ctrl_audio_selection == AUDIO_PROFILE_YM2151_SFG05)
+    if (ctrl_audio_selection == AUDIO_PROFILE_YM2151_SFG05 || ctrl_audio_selection == AUDIO_PROFILE_YM2151_SFG05_4MHZ)
         return SYSTEM_AUDIO_PROFILE_YM2151_SFG05;
-    if (ctrl_audio_selection == AUDIO_PROFILE_YM2151_SFG01)
+    if (ctrl_audio_selection == AUDIO_PROFILE_YM2151_SFG01 || ctrl_audio_selection == AUDIO_PROFILE_YM2151_SFG01_4MHZ)
         return SYSTEM_AUDIO_PROFILE_YM2151_SFG01;
     if (ctrl_audio_selection == AUDIO_PROFILE_SCC_EXTERNAL)
         return SYSTEM_AUDIO_PROFILE_SCC_EXTERNAL;
@@ -4538,8 +4545,17 @@ static void ym2151_init(ym2151_sfg_variant_t variant)
     if (!ym2151_lock)
         ym2151_lock = spin_lock_init(spin_lock_claim_unused(true));
 
+    // The SFG cartridges feed the OPM/OPP the 3.579545 MHz MSX clock, but the
+    // arcade boards most YM2151 music was written for run the chip at 4 MHz.
+    // The whole chip (pitch, envelopes, LFO and timers) is derived from that
+    // clock, so the 4 MHz profiles only need to raise the rate at which native
+    // chip frames are generated from the fixed 44.1 kHz output stream.
+    bool clock_4mhz = (ctrl_audio_selection == AUDIO_PROFILE_YM2151_SFG05_4MHZ ||
+                       ctrl_audio_selection == AUDIO_PROFILE_YM2151_SFG01_4MHZ);
+
     uint32_t save = spin_lock_blocking(ym2151_lock);
     OPM_Reset(&ym2151_instance, variant == YM2151_SFG05 ? opm_flags_ym2164 : opm_flags_none);
+    ym2151_clock_hz = clock_4mhz ? YM2151_CLOCK_4MHZ : YM2151_CLOCK;
     ym2151_clock_accum = 0;
     ym2151_last_output[0] = 0;
     ym2151_last_output[1] = 0;
@@ -4640,7 +4656,7 @@ static inline void __not_in_flash_func(ym2151_calc_stereo_sample)(int16_t *sampl
     if (ym2151_ready)
     {
         ym2151_service_writes_locked(YM2151_WRITE_SERVICE_BUDGET);
-        ym2151_clock_accum += YM2151_CLOCK;
+        ym2151_clock_accum += ym2151_clock_hz;
         while (ym2151_clock_accum >= (YM2151_SAMPLE_RATE * YM2151_FRAME_DIVIDER))
         {
             ym2151_clock_frame_locked();
@@ -4768,6 +4784,55 @@ static inline void __not_in_flash_func(pio_drain_writes)(void (*handler)(uint16_
         handler(addr, data, ctx);
     }
     wavegame_service_io();
+}
+
+// Drain the write captor FIFO without touching the WaveGame I/O path.
+// Used by the mappers that can never run a WaveGame (ASCII16-X, Neo-8,
+// Neo-16, Konami SCC with SCC audio) so their bus loop stays as short as
+// possible.
+static inline void __not_in_flash_func(pio_drain_writes_only)(void (*handler)(uint16_t addr, uint8_t data, void *ctx), void *ctx)
+{
+    uint16_t addr;
+    uint8_t data;
+    while (pio_try_get_write(&addr, &data))
+    {
+        handler(addr, data, ctx);
+    }
+}
+
+// Wait for the next memory read address, draining the write captor FIFO
+// while idle.  Mandatory for every banked mapper: game code running from
+// MSX RAM can issue long bursts of bank-switch writes without a single
+// cartridge read in between, and the write captor RX FIFO is only 8
+// entries deep.  Once it fills, the PIO stalls on "push block" and every
+// further bank switch is silently lost, leaving the mapper registers on a
+// stale segment.  Blocking on the read FIFO alone therefore drops writes.
+//
+// The idle loop reads FSTAT exactly once per iteration and tests both FIFO
+// flags from that single sample, and does nothing else.  A PIO register
+// access dominates the loop cost, so any extra work here (a second FIFO
+// poll, or a WaveGame I/O service call) directly stretches /WAIT on every
+// cartridge read and slows down VDP transfer loops.  WaveGame I/O is left
+// to the pio_drain_writes() call that the WaveGame-capable mapper loops
+// perform after taking the read address, which keeps it at its original
+// rate.
+static inline uint16_t __not_in_flash_func(pio_get_read_draining_writes)(
+    void (*handler)(uint16_t addr, uint8_t data, void *ctx), void *ctx)
+{
+    PIO pio = msx_bus.pio;
+    const uint32_t read_empty  = 1u << (PIO_FSTAT_RXEMPTY_LSB + msx_bus.sm_read);
+    const uint32_t write_empty = 1u << (PIO_FSTAT_RXEMPTY_LSB + msx_bus.sm_write);
+
+    while (true)
+    {
+        uint32_t fstat = pio->fstat;
+
+        if (!(fstat & read_empty))
+            return (uint16_t)pio_sm_get(pio, msx_bus.sm_read);
+
+        if (!(fstat & write_empty))
+            pio_drain_writes_only(handler, ctx);
+    }
 }
 
 static void __not_in_flash_func(mapper_fill_ff)(void)
@@ -5013,9 +5078,7 @@ static void __no_inline_not_in_flash_func(banked8_loop)(
 
     while (true)
     {
-        pio_drain_writes(write_handler, &ctx);
-
-        uint16_t addr = (uint16_t)pio_sm_get_blocking(msx_bus.pio, msx_bus.sm_read);
+        uint16_t addr = pio_get_read_draining_writes(write_handler, &ctx);
 
         pio_drain_writes(write_handler, &ctx);
 
@@ -7836,6 +7899,22 @@ static inline void __not_in_flash_func(scc_audio_service_buffer)(void)
 // -----------------------------------------------------------------------
 // Konami SCC mapper with SCC sound emulation via I2S
 // -----------------------------------------------------------------------
+
+// Bank switching + SCC register writes for loadrom_konamiscc_scc().
+// ctx points at the 4-entry bank register array.
+static inline void __not_in_flash_func(handle_konamiscc_scc_write)(uint16_t addr, uint8_t data, void *ctx)
+{
+    uint8_t *regs = (uint8_t *)ctx;
+
+    if      (addr >= 0x5000u && addr <= 0x57FFu) regs[0] = data;
+    else if (addr >= 0x7000u && addr <= 0x77FFu) regs[1] = data;
+    else if (addr >= 0x9000u && addr <= 0x97FFu) regs[2] = data;
+    else if (addr >= 0xB000u && addr <= 0xB7FFu) regs[3] = data;
+
+    // Forward to SCC emulator (handles enable + register writes)
+    SCC_write(&scc_instance, addr, data);
+}
+
 void __no_inline_not_in_flash_func(loadrom_konamiscc_scc)(uint32_t offset, bool cache_enable, uint32_t scc_type)
 {
     uint8_t bank_registers[4] = {0, 1, 2, 3};
@@ -7860,32 +7939,11 @@ void __no_inline_not_in_flash_func(loadrom_konamiscc_scc)(uint32_t offset, bool 
 
     while (true)
     {
-        // --- drain pending writes ---
-        uint16_t waddr;
-        uint8_t  wdata;
-        while (pio_try_get_write(&waddr, &wdata))
-        {
-            if      (waddr >= 0x5000u && waddr <= 0x57FFu) bank_registers[0] = wdata;
-            else if (waddr >= 0x7000u && waddr <= 0x77FFu) bank_registers[1] = wdata;
-            else if (waddr >= 0x9000u && waddr <= 0x97FFu) bank_registers[2] = wdata;
-            else if (waddr >= 0xB000u && waddr <= 0xB7FFu) bank_registers[3] = wdata;
-
-            // Forward to SCC emulator (handles enable + register writes)
-            SCC_write(&scc_instance, waddr, wdata);
-        }
-
-        // --- handle read request ---
-        uint16_t addr = (uint16_t)pio_sm_get_blocking(msx_bus.pio, msx_bus.sm_read);
+        // --- wait for a read, draining bank/SCC writes while idle ---
+        uint16_t addr = pio_get_read_draining_writes(handle_konamiscc_scc_write, bank_registers);
 
         // drain writes that arrived while waiting
-        while (pio_try_get_write(&waddr, &wdata))
-        {
-            if      (waddr >= 0x5000u && waddr <= 0x57FFu) bank_registers[0] = wdata;
-            else if (waddr >= 0x7000u && waddr <= 0x77FFu) bank_registers[1] = wdata;
-            else if (waddr >= 0x9000u && waddr <= 0x97FFu) bank_registers[2] = wdata;
-            else if (waddr >= 0xB000u && waddr <= 0xB7FFu) bank_registers[3] = wdata;
-            SCC_write(&scc_instance, waddr, wdata);
-        }
+        pio_drain_writes_only(handle_konamiscc_scc_write, bank_registers);
 
         bool in_window = (addr >= 0x4000u) && (addr <= 0xBFFFu);
         uint8_t data = 0xFFu;
@@ -7982,9 +8040,7 @@ void __no_inline_not_in_flash_func(loadrom_ascii16)(uint32_t offset, bool cache_
 
     while (true)
     {
-        pio_drain_writes(handle_ascii16_write, &ctx);
-
-        uint16_t addr = (uint16_t)pio_sm_get_blocking(msx_bus.pio, msx_bus.sm_read);
+        uint16_t addr = pio_get_read_draining_writes(handle_ascii16_write, &ctx);
 
         pio_drain_writes(handle_ascii16_write, &ctx);
 
@@ -8032,11 +8088,9 @@ void __no_inline_not_in_flash_func(loadrom_neo8)(uint32_t offset)
 
     while (true)
     {
-        pio_drain_writes(handle_neo8_write, &ctx);
+        uint16_t addr = pio_get_read_draining_writes(handle_neo8_write, &ctx);
 
-        uint16_t addr = (uint16_t)pio_sm_get_blocking(msx_bus.pio, msx_bus.sm_read);
-
-        pio_drain_writes(handle_neo8_write, &ctx);
+        pio_drain_writes_only(handle_neo8_write, &ctx);
 
         bool in_window = (addr <= 0xBFFFu);
         uint8_t data = 0xFFu;
@@ -8079,11 +8133,9 @@ void __no_inline_not_in_flash_func(loadrom_neo16)(uint32_t offset)
 
     while (true)
     {
-        pio_drain_writes(handle_neo16_write, &ctx);
+        uint16_t addr = pio_get_read_draining_writes(handle_neo16_write, &ctx);
 
-        uint16_t addr = (uint16_t)pio_sm_get_blocking(msx_bus.pio, msx_bus.sm_read);
-
-        pio_drain_writes(handle_neo16_write, &ctx);
+        pio_drain_writes_only(handle_neo16_write, &ctx);
 
         bool in_window = (addr <= 0xBFFFu);
         uint8_t data = 0xFFu;
@@ -9475,6 +9527,7 @@ typedef struct {
     uint8_t       slot_lru[BANK_CACHE_MAX_SLOTS];
     int8_t        page_slot[BANK_CACHE_MAX_PINS];
     const uint8_t *flash_base;
+    uint8_t      *slot_base;    // backing store for the slots
     uint32_t      rom_length;
     uint8_t       num_slots;
     uint8_t       num_pins;
@@ -9484,15 +9537,17 @@ typedef struct {
 
 static inline void __not_in_flash_func(bcache_init)(
     bank_cache_t *c, uint16_t slot_size, uint8_t num_pins,
-    const uint8_t *flash_base, uint32_t rom_length)
+    const uint8_t *flash_base, uint32_t rom_length,
+    uint8_t *slot_base, uint8_t max_slots)
 {
-    uint8_t num_slots = (uint8_t)(CACHE_SIZE / slot_size);
+    uint8_t num_slots = max_slots;
     if (num_slots > BANK_CACHE_MAX_SLOTS) num_slots = BANK_CACHE_MAX_SLOTS;
     c->num_slots  = num_slots;
     c->num_pins   = num_pins;
     c->slot_size  = slot_size;
     c->slot_shift = (slot_size == 8192u) ? 13 : 14;
     c->flash_base = flash_base;
+    c->slot_base  = slot_base;
     c->rom_length = rom_length;
     for (int i = 0; i < BANK_CACHE_MAX_SLOTS; i++)
     {
@@ -9556,7 +9611,7 @@ static inline int8_t __not_in_flash_func(bcache_ensure)(bank_cache_t *c, uint16_
 
     slot = bcache_evict(c);
     uint32_t src_off = (uint32_t)(bank & 0x0FFFu) << c->slot_shift;
-    uint8_t *dst = &rom_sram[(uint32_t)slot * c->slot_size];
+    uint8_t *dst = &c->slot_base[(uint32_t)slot * c->slot_size];
     uint16_t ss = c->slot_size;
 
     if (c->rom_length == 0u || src_off < c->rom_length)
@@ -9651,7 +9706,7 @@ static inline void __not_in_flash_func(flash_process_write)(
             if (slot >= 0)
             {
                 uint32_t off = (uint32_t)slot * st->cache.slot_size + (addr & 0x3FFFu);
-                rom_sram[off] &= data;
+                st->cache.slot_base[off] &= data;
             }
             st->flash_state = FLASH_IDLE;
             break;
@@ -9674,7 +9729,7 @@ static inline void __not_in_flash_func(flash_process_write)(
                 uint8_t page_idx = ((addr >> 14) & 0x01u) ? 0u : 1u;
                 int8_t slot = st->cache.page_slot[page_idx];
                 if (slot >= 0)
-                    memset(&rom_sram[(uint32_t)slot * st->cache.slot_size], 0xFFu, st->cache.slot_size);
+                    memset(&st->cache.slot_base[(uint32_t)slot * st->cache.slot_size], 0xFFu, st->cache.slot_size);
             }
             st->flash_state = FLASH_IDLE;
             break;
@@ -9701,42 +9756,66 @@ static inline void __not_in_flash_func(handle_ascii16x_write_cached)(uint16_t ad
     st->cache.page_slot[page] = bcache_ensure(&st->cache, bank);
 }
 
+// ASCII16-X bank cache backing store.
+//
+// Explorer's rom_sram is a PSRAM region, so serving mapper reads from it
+// costs a QMI transaction per byte and stretches /WAIT on every cartridge
+// access.  Borrow the OPLL tll_table (128KB of internal SRAM, meaningful
+// only while an MSX-MUSIC instance exists) so ASCII16-X reads come from real
+// internal SRAM, matching the standalone loadrom firmware.  When MSX-MUSIC
+// is enabled the table is off limits and we fall back to the PSRAM path.
+#define ASCII16X_SLOT_SIZE  16384u
+#define ASCII16X_SRAM_SLOTS 8u
+
 void __no_inline_not_in_flash_func(loadrom_ascii16x)(uint32_t offset, bool cache_enable)
 {
     (void)cache_enable;
 
-    if (!psram_prepare_rom_cache())
+    ascii16x_state_t state;
+    memset(&state, 0, sizeof(state));
+
+    const uint8_t *rom_base;
+    uint32_t available_length;
+
+    uint8_t *sram_cache = NULL;
+    if (msx_music_instance == NULL)
+        sram_cache = (uint8_t *)OPLL_borrow_table_memory(ASCII16X_SRAM_SLOTS * ASCII16X_SLOT_SIZE);
+
+    if (sram_cache == NULL && !psram_prepare_rom_cache())
     {
         return;
     }
 
-    const uint8_t *rom_base;
-    uint32_t available_length;
-    // Don't preload via prepare_rom_source — bcache manages SRAM directly.
+    // Don't preload via prepare_rom_source — bcache manages the slots directly.
     prepare_rom_source(offset, false, 0u, &rom_base, &available_length);
 
-    ascii16x_state_t state;
-    memset(&state, 0, sizeof(state));
+    if (sram_cache != NULL)
+    {
+        bcache_init(&state.cache, ASCII16X_SLOT_SIZE, 2, rom_data + offset, active_rom_size,
+                    sram_cache, (uint8_t)ASCII16X_SRAM_SLOTS);
+    }
+    else
+    {
+        bcache_init(&state.cache, ASCII16X_SLOT_SIZE, 2, rom_data + offset, active_rom_size,
+                    rom_sram, (uint8_t)(CACHE_SIZE / ASCII16X_SLOT_SIZE));
+    }
 
-    bcache_init(&state.cache, 16384u, 2, rom_data + offset, active_rom_size);
     bcache_prefill(&state.cache);
 
     // Initial bank 0 visible at both windows.
     state.cache.page_slot[0] = bcache_find(&state.cache, 0);
     state.cache.page_slot[1] = state.cache.page_slot[0];
 
-    // bcache reads from rom_sram via slot index, bypassing read_rom_byte.
+    // bcache reads via slot index, bypassing read_rom_byte.
     rom_cached_size = 0;
 
     msx_pio_bus_init();
 
     while (true)
     {
-        pio_drain_writes(handle_ascii16x_write_cached, &state);
+        uint16_t addr = pio_get_read_draining_writes(handle_ascii16x_write_cached, &state);
 
-        uint16_t addr = (uint16_t)pio_sm_get_blocking(msx_bus.pio, msx_bus.sm_read);
-
-        pio_drain_writes(handle_ascii16x_write_cached, &state);
+        pio_drain_writes_only(handle_ascii16x_write_cached, &state);
 
         bool in_window = (addr >= 0x4000u) && (addr <= 0xBFFFu);
         uint8_t data = 0xFFu;
@@ -9746,7 +9825,7 @@ void __no_inline_not_in_flash_func(loadrom_ascii16x)(uint32_t offset, bool cache
             uint8_t page_idx = ((addr >> 14) & 0x01u) ? 0u : 1u;
             int8_t slot = state.cache.page_slot[page_idx];
             if (slot >= 0)
-                data = rom_sram[(uint32_t)slot * state.cache.slot_size + (addr & 0x3FFFu)];
+                data = state.cache.slot_base[(uint32_t)slot * state.cache.slot_size + (addr & 0x3FFFu)];
         }
 
         pio_sm_put_blocking(msx_bus.pio, msx_bus.sm_read, pio_build_token(in_window, data));
