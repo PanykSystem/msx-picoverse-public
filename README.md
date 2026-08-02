@@ -100,13 +100,13 @@ Interactive BOM available at [PicoVerse 2040 BOM](https://htmlpreview.github.io/
 
 | Reference | Description | Quantity | Link |
 | --- | --- | --- | --- |
-| U1 | RP2040 Dev Board 30 GPIO pins exposed | 1 | [AliExpress](https://s.click.aliexpress.com/e/_c4MuM9st) |
+| U1 | RP2040 Dev Board 30 GPIO pins exposed | 1 | [AliExpress](https://s.click.aliexpress.com/e/_c2un4bmn) |
 | C1 | 0603 0.1 µF Ceramic Capacitor | 1 | [AliExpress](https://s.click.aliexpress.com/e/_c2w5e36V) |
 | C2 | 0603 10 µF Ceramic Capacitor | 1 | [AliExpress](https://s.click.aliexpress.com/e/_c2w5e36V)|
 | R2, R3, R4, R5, R6, R7, R8, R9, R10, R11, R12, R13| 0603 10 kΩ Resistor | 12 | [AliExpress](https://s.click.aliexpress.com/e/_c3XBv4od)|
 | R1 | 0603 2 KΩ Resistor | 1 | [AliExpress](https://s.click.aliexpress.com/e/_c3XBv4od)|
 | D1 | 1N5819 SOD-123 Diode | 1 | [AliExpress](https://s.click.aliexpress.com/e/_c4WEKCuz) |
-| Q1, Q2, Q3, Q4, Q5 | BSS138 SOT-23 Transistor | 5 | [AliExpress](https://s.click.aliexpress.com/e/_c2veWxcD)|
+| Q1, Q2, Q3, Q4, Q5 | BSS138 SOT-23 Transistor | 5 | [AliExpress](https://s.click.aliexpress.com/e/_c3IHdO5t)|
 
 ### PicoVerse 2350 Cartridge
 
@@ -140,7 +140,7 @@ Interactive BOM available at [PicoVerse 2350 BOM](https://htmlpreview.github.io/
 | --- | --- | --- | --- |
 | U1 | WaveShare Core2350B Dev Board 48 GPIO pins exposed (8Mb PSRAM)| 1 | [AliExpress](https://pt.aliexpress.com/item/1005009578742534.html?spm=a2g0o.order_list.order_list_main.112.62b91802b6L8HW&gatewayAdapt=glo2bra) |
 |U2| UDA1334A I2S Stereo DAC| 1 | [AliExpress](https://s.click.aliexpress.com/e/_c3gam5lH) |
-|U3| ESP-01 ESP8266 WiFi Module| 1 | [AliExpress](https://s.click.aliexpress.com/e/_c4a5rnGj) |
+|U3| ESP-01 ESP8266 WiFi Module| 1 | [AliExpress](https://s.click.aliexpress.com/e/_c3cPt2OL) |
 |C1| 0603 0.1 µF Ceramic Capacitor | 1 | [AliExpress](https://s.click.aliexpress.com/e/_c3tkUxHz) |
 |C2,C3| 0603 10 µF Ceramic Capacitor | 2 | [AliExpress](https://s.click.aliexpress.com/e/_c3tkUxHz)|
 |R1| 0603 2 KΩ Resistor | 1 | [AliExpress](https://s.click.aliexpress.com/e/_c43uKcEj)|
@@ -265,6 +265,8 @@ All hardware and firmware binaries in this repository are released under the Cre
 **msxromcrt0.s** is used on Nextor C implementation and was adapted by S0urceror, 2022, from the crt0.s file available in FusionC v2.0. The original crt0.s file is licensed under the MIT License. The adapted msxromcrt0.s file in this repository is also released under the MIT License, permitting free use, modification, and distribution with proper attribution.
 
 **uf2format.h** is used in all UF2 builder tools and was adapted from the UF2 specification and reference implementation available at https://github.com/Microsoft/uf2/blob/master/uf2.h. The original uf2.h is copyright by Microsoft Corp and the file is licensed under the MIT License. The adapted uf2format.h file in this repository is also released under the MIT License, allowing for free use, modification, and distribution with proper attribution.
+
+**sha1.h** provides the minimal SHA-1 implementation used by the PicoVerse PC tools. It is based on Steve Reid's public-domain SHA-1 implementation <sreid@sea-to-sky.net>.
 
 **emu2212.c** and **emu2212.h** used to implement SCC and SCC+ emulation are copyright by Mitsutaka Okazaki 2014 and licensed under the MIT License, allowing for free use, modification, and distribution with proper attribution. [emu2212 @ Digital Sound Antiques](https://github.com/digital-sound-antiques/emu2212)
 
