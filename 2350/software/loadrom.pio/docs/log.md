@@ -1,5 +1,12 @@
 # Change Log
 
+## PicoVerse 2350 Loadrom v2.71
+
+- Bumped the loadrom build version to v2.71 (top-level and tool Makefiles).
+- Fixed the standalone OPL4 firmware asserting `/BUSDIR` on bus cycles that do not belong to it. The dedicated `/BUSDIR` state machine inferred "an OPL4 read is in progress" purely from `/WAIT` being low, but `/WAIT` is a shared open-drain MSX bus signal, so any second cartridge stretching its own cycles made the OPL4 flip the main-board data-bus buffer towards the CPU. `msx_opl4_busdir` now tests `/IORQ` (new `jmp_pin`, matching the MSX-AUDIO firmware) before asserting, so memory cycles driven by another cartridge are ignored.
+- Changed the standalone OPL4 write captor (`msx_opl4_io_write`) to commit register/memory writes on the `/WR` rising edge. The GPIO snapshot is still taken well inside `/WR` low, where the Z80 write data is valid, but the RX FIFO push (which triggers the PIO IRQ and the `opl4_bus_write()` call) was happening before `wait 1 gpio 25`, so the emulated YMF278B could apply a write while the CPU had not finished the bus cycle. The push now happens after the `/WR` rise, matching how a real chip latches.
+- Applied the same `/WR` rising-edge commit to the standalone MSX-AUDIO firmware: both `msxaudio_io_write` (Y8950 ports 0xC0/0xC1) and `msxaudio_mem_write` (ADPCM sample RAM window) now sample the bus inside `/WR` low but only push to the RX FIFO once `/WR` has risen.
+
 ## PicoVerse 2350 Loadrom v2.70
 
 - Bumped the loadrom build version to v2.70 (top-level and tool Makefiles).
