@@ -1,5 +1,15 @@
 # Change Log
 
+## PicoVerse 2350 Loadrom v2.72
+
+- Fixed missing instruments in OPL4 MOD playback (reported with MOP playing `enigma.mod`). A note retrigger writes key-off then key-on for the same voice, and when both arrived within the same emulated sample the pair was merged into a single "still on" state, so the note never restarted and that voice fell silent. Key changes are now applied in the order the MSX issues them.
+- Fixed audible clicks, crackle and noise on dense OPL4 songs (reported with Bombaman and Pumpkin Adventure 3). The emulation was spending most of its per-sample time budget on voices that were silent, leaving it right at - and sometimes over - the real-time limit, which starved the audio output. Silent voices are now skipped, cutting the load to roughly a quarter of the budget.
+- Fixed hanging and delayed notes caused by the cartridge freezing the MSX for about 150 us on every OPL4 register read. During read bursts this stole up to a quarter of the CPU time from the running music replayer. The read handler now answers about fifteen times faster, which also makes OPL4 sample uploads roughly three times quicker.
+- Fixed the optional adaptive voice limiter (`--opl4-limit`) leaving hanging notes: dropped voices froze mid-note instead of being silenced, and resumed where they left off when the limiter recovered.
+- Improved the OPL4 USB debug report with true output-clipping detection, the number of voices actually being rendered, and the voices the MSX asked to play, so audio complaints can be traced to the right stage. Removed some per-sample debug work that was distorting the timing figures it reported.
+- Added build options to individually disable this version's OPL4 changes (`OPL4_SKIP_INACTIVE_FM`, `OPL4_SKIP_INACTIVE_PCM`, `OPL4_READ_SYNC_IDLE_SPINS`) so a regression can be narrowed down from the build configuration alone. Defaults keep all the fixes enabled.
+- Bumped the loadrom build version to v2.72 (top-level and tool Makefiles).
+
 ## PicoVerse 2350 Loadrom v2.71
 
 - Bumped the loadrom build version to v2.71 (top-level and tool Makefiles).
