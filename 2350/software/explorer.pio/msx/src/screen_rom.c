@@ -18,9 +18,7 @@ static void send_detect_mapper(unsigned int index);
 static unsigned char send_set_mapper(unsigned int index, unsigned char mapper);
 static unsigned char send_load_options(unsigned int index, unsigned char *audio_profile, unsigned char *psg_enabled, unsigned char *mapper, unsigned char *sd_partition, unsigned char *audio_volume, unsigned char *vdp_freq);
 static void send_save_options(unsigned int index, unsigned char audio_profile, unsigned char psg_enabled, unsigned char mapper, unsigned char sd_partition, unsigned char audio_volume, unsigned char vdp_freq);
-static void wait_for_ctrl_cmd_clear(void);
 static unsigned char read_mapper_value(void);
-static unsigned char read_ack_value(void);
 static void render_rom_screen(const ROMRecord *record);
 static void render_rom_prefixed_line(unsigned char row, const char *prefix, const char *text, int selected);
 static void render_rom_mapper_line(const char *mapper_text, int selected);
@@ -62,6 +60,12 @@ static unsigned char rom_allow_freq = 0;
 static void write_index_query(unsigned int index) {
     Poke(CTRL_QUERY_BASE + 0, (unsigned char)(index & 0xFFu));
     Poke(CTRL_QUERY_BASE + 1, (unsigned char)((index >> 8) & 0xFFu));
+}
+
+static void clear_query_tail(unsigned char start) {
+    for (unsigned char i = start; i < CTRL_QUERY_SIZE; i++) {
+        Poke(CTRL_QUERY_BASE + i, 0);
+    }
 }
 
 static unsigned char record_is_system_rom(const ROMRecord *record) {
@@ -110,41 +114,23 @@ static unsigned char record_supports_msx_music(const ROMRecord *record) {
 
 static void send_detect_mapper(unsigned int index) {
     write_index_query(index);
-    for (unsigned int i = 2; i < CTRL_QUERY_SIZE; i++) {
-        Poke(CTRL_QUERY_BASE + i, 0);
-    }
+    clear_query_tail(2);
     Poke(CTRL_CMD, CMD_DETECT_MAPPER);
-}
-
-static void wait_for_ctrl_cmd_clear(void) {
-    for (unsigned int wait = 0; wait < 200; wait++) {
-        if (Peek(CTRL_CMD) == 0) {
-            break;
-        }
-        delay_ms(5);
-    }
 }
 
 static unsigned char send_set_mapper(unsigned int index, unsigned char mapper) {
     write_index_query(index);
     Poke(CTRL_QUERY_BASE + 2, mapper);
-    for (unsigned int i = 3; i < CTRL_QUERY_SIZE; i++) {
-        Poke(CTRL_QUERY_BASE + i, 0);
-    }
-    Poke(CTRL_CMD, CMD_SET_MAPPER);
-    wait_for_ctrl_cmd_clear();
-    return read_ack_value();
+    clear_query_tail(3);
+    return run_ctrl_cmd(CMD_SET_MAPPER);
 }
 
 static unsigned char send_load_options(unsigned int index, unsigned char *audio_profile, unsigned char *psg_enabled, unsigned char *mapper, unsigned char *sd_partition, unsigned char *audio_volume, unsigned char *vdp_freq) {
     write_index_query(index);
-    for (unsigned int i = 2; i < CTRL_QUERY_SIZE; i++) {
-        Poke(CTRL_QUERY_BASE + i, 0);
-    }
-    Poke(CTRL_CMD, CMD_LOAD_OPTIONS);
-    wait_for_ctrl_cmd_clear();
+    clear_query_tail(2);
+    unsigned char options_ack = run_ctrl_cmd(CMD_LOAD_OPTIONS);
     current_wavegame_rom = Peek(CTRL_WAVEGAME_ROM) ? 1 : 0;
-    if (!read_ack_value()) {
+    if (!options_ack) {
         return 0;
     }
     *audio_profile = Peek(CTRL_AUDIO);
@@ -169,19 +155,13 @@ static void send_save_options(unsigned int index, unsigned char audio_profile, u
     Poke(CTRL_QUERY_BASE + 5, sd_partition);
     Poke(CTRL_QUERY_BASE + 6, audio_volume);
     Poke(CTRL_QUERY_BASE + 7, vdp_freq);
-    for (unsigned int i = 8; i < CTRL_QUERY_SIZE; i++) {
-        Poke(CTRL_QUERY_BASE + i, 0);
-    }
+    clear_query_tail(8);
     Poke(CTRL_CMD, CMD_SAVE_OPTIONS);
-    wait_for_ctrl_cmd_clear();
+    wait_ctrl_cmd();
 }
 
 static unsigned char read_mapper_value(void) {
     return *((unsigned char *)CTRL_MAPPER);
-}
-
-static unsigned char read_ack_value(void) {
-    return *((unsigned char *)CTRL_ACK);
 }
 
 static void apply_detected_mapper(ROMRecord *record) {
@@ -196,10 +176,7 @@ static void apply_detected_mapper(ROMRecord *record) {
 void quick_run_rom(unsigned int index) {
     ROMRecord *record = &records[index % FILES_PER_PAGE];
     write_index_query(index);
-    Poke(CTRL_CMD, CMD_PREPARE_QUICK_RUN);
-    while (Peek(CTRL_CMD) != 0) {
-        delay_ms(10);
-    }
+    (void)run_ctrl_cmd(CMD_PREPARE_QUICK_RUN);
     apply_detected_mapper(record);
     loadGame((int)index);
 }
@@ -271,7 +248,7 @@ void show_rom_screen(unsigned int index) {
     if ((record->Mapper & SOURCE_SD_FLAG) && !record_is_folder(record)) {
         unsigned char mapper_code = record_mapper_code(record->Mapper);
         if (mapper_code == 0) {
-            wait_for_ctrl_cmd_clear();
+            wait_ctrl_cmd();
             send_detect_mapper(index);
             waiting_mapper = 1;
         } else if (record_supports_scc_audio(record)) {
@@ -716,6 +693,7 @@ static void show_mp3_screen(unsigned int index) {
                 if (selection == 0) {
                     cmd = mp3_play_stop_command(status);
                     if (cmd == MP3_CMD_PLAY) {
+                        save_last_selection(detail_index);
                         send_mp3_select(detail_index);
                     }
                 } else if (selection == 1) {

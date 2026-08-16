@@ -26,6 +26,7 @@ unsigned int totalFiles;
 unsigned long totalSize;
 ROMRecord records[FILES_PER_PAGE];
 static unsigned char menu_message_row;
+static unsigned char restore_pending; // waiting for the Pico to locate the last executed entry
 
 // --- Forward declarations (UI + Pico protocol) ---
 static int read_search_query(char *buffer, int max_len);
@@ -319,20 +320,30 @@ static void refresh_menu_state(const char *loading_text) {
     unsigned int count = 0xFFFFu;
     unsigned int last = 0xFFFFu;
     unsigned int stable = 0;
+    unsigned int limit = restore_pending ? 500u : 100u;
     unsigned char blink_state = 1;
     unsigned char blink_tick = 0;
     menu_ui_print_last_line_text(message);
-    for (unsigned int wait = 0; wait < 100; wait++) {
-        count = read_total_count();
-        if (count != 0xFFFFu && count == last) {
-            stable++;
-            if (stable >= 2) {
+    for (unsigned int wait = 0; wait < limit; wait++) {
+        // While restoring, the Pico raises CTRL_ACK once the list is rebuilt and
+        // the saved entry has been located: an exact signal, so there is no need
+        // to guess completion from a settling record count.
+        if (restore_pending) {
+            if (Peek(CTRL_ACK) == CTRL_MAGIC) {
                 break;
             }
         } else {
-            stable = 0;
+            count = read_total_count();
+            if (count != 0xFFFFu && count == last) {
+                stable++;
+                if (stable >= 2) {
+                    break;
+                }
+            } else {
+                stable = 0;
+            }
+            last = count;
         }
-        last = count;
         delay_ms(10);
         menu_ui_blink_last_line(message, &blink_state, &blink_tick, 8);
     }
@@ -343,6 +354,14 @@ static void refresh_menu_state(const char *loading_text) {
     }
     currentPage = 1;
     currentIndex = 0;
+    if (restore_pending) {
+        restore_pending = 0;
+        unsigned int match = read_match_index();
+        if (match < totalFiles) {
+            currentIndex = (int)match;
+            currentPage = (currentIndex / FILES_PER_PAGE) + 1;
+        }
+    }
     menu_ui_clear_last_line();
     displayMenu();
     if (menu_shortcut_selection == MENU_SHORTCUT_MICROSD && Peek(CTRL_STATUS) == CTRL_STATUS_SD_MISSING) {
@@ -654,6 +673,42 @@ static void switch_menu_source(unsigned char source_mode) {
             : menu_ui_status_text("Load Flash", "Loading from flash memory..."));
 }
 
+// wait_ctrl_cmd - Wait until the Pico reports the pending command as finished.
+void wait_ctrl_cmd(void) {
+    for (unsigned int wait = 0; wait < 500; wait++) {
+        if (Peek(CTRL_CMD) == 0) {
+            break;
+        }
+        delay_ms(10);
+    }
+}
+
+// run_ctrl_cmd - Send a command byte to the Pico, wait for it to complete and
+// return the acknowledge byte.
+unsigned char run_ctrl_cmd(unsigned char cmd) {
+    Poke(CTRL_CMD, cmd);
+    wait_ctrl_cmd();
+    return Peek(CTRL_ACK);
+}
+
+// save_last_selection - Ask the Pico to store the entry being executed on the
+// microSD card so the next boot reopens the menu on it.
+void save_last_selection(unsigned int index) {
+    Poke(CTRL_QUERY_BASE + 0, (unsigned char)(index & 0xFF));
+    Poke(CTRL_QUERY_BASE + 1, (unsigned char)((index >> 8) & 0xFF));
+    (void)run_ctrl_cmd(CMD_SAVE_LAST_SELECTION);
+}
+
+// restore_last_selection - Open the menu on the source, folder and entry that
+// was executed last, falling back to the flash list when there is none. The
+// list is built, located and drawn in a single refresh pass.
+static void restore_last_selection(void) {
+    unsigned char source = run_ctrl_cmd(CMD_LOAD_LAST_SELECTION) ? Peek(CTRL_MAPPER) : 0;
+
+    restore_pending = (source == SOURCE_MODE_SD || source == SOURCE_MODE_FLASH);
+    switch_menu_source(restore_pending ? source : SOURCE_MODE_FLASH);
+}
+
 static void cycle_sd_partition(void) {
     if (menu_shortcut_selection == MENU_SHORTCUT_MICROSD) {
         Poke(CTRL_CMD, CMD_CYCLE_SD_PARTITION);
@@ -868,6 +923,7 @@ void loadGame(int index)
     Poke(MP3_CTRL_CMD, MP3_CMD_STOP);
     if ((record->Mapper & ~SOURCE_SD_FLAG) != 0)
     {
+        save_last_selection((unsigned int)index); // Remember it for the next boot
         Poke(ROM_SELECT_REGISTER, index); // Set the game index (absolute)
         execute_rst00(); // Execute RST 00h to reset the MSX computer and load the game
         execute_rst00();
@@ -1103,7 +1159,7 @@ void main() {
     clear_fkeys();
 
     menu_ui_render_menu_frame();
-    switch_menu_source(SOURCE_MODE_FLASH);
+    restore_last_selection();
     *((unsigned int *)BIOS_GETPNT) = *((unsigned int *)BIOS_PUTPNT);
     redefine_function_keys();
     // Activate navigation

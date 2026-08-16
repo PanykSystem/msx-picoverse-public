@@ -1,5 +1,12 @@
 # Change Log
 
+## PicoVerse 2350 Loadrom v2.73
+
+- Fixed hanging notes in OPL4 playback, most noticeable at music transitions (reported with Bombaman). The wave part has a "pseudo-reverb" feature that lets a note ring out at a fixed slow rate once it drops below -18 dB. That state was also being entered *after* the MSX had already released the note, and it overrode both the instrument's own release rate and the damp command the music driver uses to silence a voice, so released notes kept sounding for many seconds instead of stopping. Pseudo-reverb is now only entered while a note is still held, and an explicit key-off always takes a released voice back to its programmed release rate. Debug telemetry confirmed the cause: during every hang the firmware reported that all the ringing voices had already been released by the MSX.
+- Fixed occasional dropped OPL4 register writes during normal playback. The audio core holds the emulation lock for the whole of each generated sample - about two thirds of the time available - so the bus core could sit blocked long enough for the 8-entry hardware write FIFO to fill and silently lose MSX writes. The bus core now keeps emptying that FIFO into its much larger software queue while it waits for the lock, and also between register writes, which can each take a while when a new instrument has to be fetched from memory. Debug captures had shown the overflow flag being raised in 8 of 118 seconds of Bombaman playback.
+- Added the voices sitting in the pseudo-reverb envelope (`pcmRev`) to the OPL4 USB debug report, so a hanging-note report can be checked against the envelope state that causes it.
+- Bumped the loadrom build version to v2.73 (top-level and tool Makefiles).
+
 ## PicoVerse 2350 Loadrom v2.72
 
 - Fixed missing instruments in OPL4 MOD playback (reported with MOP playing `enigma.mod`). A note retrigger writes key-off then key-on for the same voice, and when both arrived within the same emulated sample the pair was merged into a single "still on" state, so the note never restarted and that voice fell silent. Key changes are now applied in the order the MSX issues them.
@@ -7,6 +14,7 @@
 - Fixed hanging and delayed notes caused by the cartridge freezing the MSX for about 150 us on every OPL4 register read. During read bursts this stole up to a quarter of the CPU time from the running music replayer. The read handler now answers about fifteen times faster, which also makes OPL4 sample uploads roughly three times quicker.
 - Fixed the optional adaptive voice limiter (`--opl4-limit`) leaving hanging notes: dropped voices froze mid-note instead of being silenced, and resumed where they left off when the limiter recovered.
 - Improved the OPL4 USB debug report with true output-clipping detection, the number of voices actually being rendered, and the voices the MSX asked to play, so audio complaints can be traced to the right stage. Removed some per-sample debug work that was distorting the timing figures it reported.
+- Extended the OPL4 USB debug report with the key-offs the MSX issued and the voices still sounding after being released (`pcmOff`, `pcmRel`), which separates a lost key-off from a release envelope that simply takes a long time to fade - both are heard as a hanging note.
 - Added build options to individually disable this version's OPL4 changes (`OPL4_SKIP_INACTIVE_FM`, `OPL4_SKIP_INACTIVE_PCM`, `OPL4_READ_SYNC_IDLE_SPINS`) so a regression can be narrowed down from the build configuration alone. Defaults keep all the fixes enabled.
 - Bumped the loadrom build version to v2.72 (top-level and tool Makefiles).
 

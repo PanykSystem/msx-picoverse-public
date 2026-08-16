@@ -1,5 +1,20 @@
 # Change Log
 
+## PicoVerse 2350 Explorer v2.44
+
+- Bumped Explorer version to v2.44.
+- Added last-executed-entry memory for the `F1 - Flash` and `F2 - MicroSD` browsers: launching a ROM or starting an MP3/WAV stores the entry in `/PICOVERSE.PVL` on the root of the microSD browse partition, and the next boot reopens the menu on that source, folder and cursor position instead of always starting at the top of the flash list.
+- Added the `CMD_LOAD_LAST_SELECTION` (0x0C) and `CMD_SAVE_LAST_SELECTION` (0x0D) menu commands. The save command records the source plus the full microSD path (or the flash entry name) and skips the write when the stored entry is unchanged; the load command validates the file, reports the source in `CTRL_MAPPER`, restores the microSD folder used by the following `CMD_SET_SOURCE`, and drops back to the flash list when the card, file or entry is gone.
+- Made the Pico resolve the saved entry into a list position when the browse list finishes rebuilding, publishing it in `CTRL_MATCH_L/H` and flagging completion with `CTRL_ACK = CTRL_MAGIC`.
+- Kept the restore to a single menu build: `refresh_menu_state()` waits on the `CTRL_ACK` completion flag (instead of guessing from a settling record count), applies the saved cursor position before drawing, and renders the page once. The first implementation ran two full refresh passes and three page renders, which made the remembered entry visibly slow to appear at boot.
+- Consolidated the MSX menu Pico-command plumbing into the shared `wait_ctrl_cmd()` / `run_ctrl_cmd()` helpers plus a `clear_query_tail()` query-fill helper, replacing the duplicated wait/ack/zero-fill loops in `screen_rom.c` to keep the menu ROM within the `0xB900` code limit (`_CODE` now ends at 0xB83C).
+- Restored the File Hunter `Network: Online` / `Network: Offline` status message (`Net: Online` / `Net: Offline` in 40-column mode) on the bottom status line, redrawn with the screen and refreshed every ~3 seconds while browsing.
+- Moved the whole ESP-01 link decision to the Pico and exposed the result as a single byte the MSX reads from the new `CTRL_NET_STATUS` register (0xBFA1, 0 = offline, 1 = online), instead of having the MSX menu parse the ESP-01 answer text.
+- Made the ESP-01 status check reliable: the UART is drained until quiet before the `g` (get AP status) query is sent, the reply reader resynchronizes on the reply tag and validates the whole frame (so bytes left over from an earlier transfer no longer look like a missing module), and failed attempts are retried after the 250 ms ESP-01 receive-parser timeout.
+- Fixed the root cause of the old false `Offline` reports: the link is now considered up whenever the module reports `STATION_GOT_IP`, regardless of whether the firmware returns the SSID string, and a `STATION_CONNECTING` answer is polled for up to 3 seconds instead of being treated as offline.
+- Cached the link state on the Pico with a 3-second re-probe interval while a module answers and a 30-second back-off (single short attempt) when no module is fitted, so the MSX can poll the indicator without stalling; a completed HTTP transfer marks the link online for 10 seconds and outranks a status query the busy module could not answer.
+- Applied the same relaxed connection rule to the pre-transfer Wi-Fi check used by the catalog fetch, ROM downloads and the Nexus tracker check-in, which previously refused to start when the ESP-01 reported an empty SSID.
+
 ## PicoVerse 2350 Explorer v2.43
 
 - Bumped Explorer version to v2.43.

@@ -35,6 +35,7 @@ static unsigned int fh_total_files;
 static ExplorerFHRecord fh_records[FILES_PER_PAGE];
 static char fh_status_right[CTRL_FH_STATUS_TEXT_SIZE];
 static unsigned char fh_message_row;
+static unsigned char fh_net_state;
 
 static void fh_redraw(void);
 static void fh_read_status_text(void);
@@ -42,6 +43,7 @@ static void fh_show_detail(unsigned int index);
 static void fh_draw_status_left(const char *text);
 static void fh_update_message_row_text(void);
 static void fh_wait_ready_status(const char *text);
+static void fh_refresh_network_status(unsigned char force);
 static unsigned char fh_record_fits_sd_cache(const ExplorerFHRecord *record);
 
 static unsigned int fh_read_u16(unsigned int addr)
@@ -329,6 +331,24 @@ static void fh_position_cursor_on_selection(void)
     }
 }
 
+// Asks the Pico to re-check the ESP-01 link (it rate limits the probe itself)
+// and repaints the indicator only when the reported state changed.
+static void fh_refresh_network_status(unsigned char force)
+{
+    unsigned char state;
+
+    Poke(CTRL_CMD, CMD_FH_WIFI_STATUS);
+    fh_wait_ready();
+    state = (Peek(CTRL_NET_STATUS) == NET_STATUS_ONLINE);
+    if (!force && state == fh_net_state) {
+        return;
+    }
+    fh_net_state = state;
+    fh_draw_status_left(menu_ui_status_text(state ? "Net: Online" : "Net: Offline",
+                                            state ? "Network: Online" : "Network: Offline"));
+    fh_position_cursor_on_selection();
+}
+
 static void fh_move_selection(unsigned int new_index)
 {
     unsigned int old_index = fh_current_index;
@@ -351,6 +371,7 @@ static char fh_wait_key_with_scroll(void)
 {
     volatile unsigned int *jiffyPtr = (volatile unsigned int *)JIFFY;
     unsigned int lastTick = *jiffyPtr;
+    unsigned int lastNetTick = *jiffyPtr;
     int startPos = 0;
     const unsigned int scrollDelay = 30U;
     char row_text[81];
@@ -359,6 +380,11 @@ static char fh_wait_key_with_scroll(void)
     while (1) {
         if (bios_chsns()) {
             return (char)bios_chget();
+        }
+
+        if ((unsigned int)(*jiffyPtr - lastNetTick) >= 180U) {
+            fh_refresh_network_status(0);
+            lastNetTick = *jiffyPtr;
         }
 
         if (fh_total_files > 0 && !fh_message_row) {
@@ -412,7 +438,7 @@ static void fh_redraw(void)
 {
     fh_render_frame();
     fh_draw_list();
-    fh_position_cursor_on_selection();
+    fh_refresh_network_status(1);
 }
 
 static int fh_read_search_query(char *buffer, unsigned int max_len)

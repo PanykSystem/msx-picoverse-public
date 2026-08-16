@@ -79,6 +79,10 @@
 // between the SD partition info buffer (0xBF80..0xBF9F) and the chip-id buffer
 // (0xBFAF..0xBFBF). The save channel reuses query buffer byte 7.
 #define CTRL_VDP_FREQ 0xBFA0
+// ESP-01 link state maintained by the Pico (0 = offline, 1 = online). The Pico
+// probes the module, so the menu only has to read this byte.
+#define CTRL_NET_STATUS 0xBFA1
+#define NET_STATUS_ONLINE 1
 #define MP3_CTRL_BASE      0xBFE0
 #define MP3_CTRL_CMD       (MP3_CTRL_BASE + 0)
 #define MP3_CTRL_STATUS    (MP3_CTRL_BASE + 1)
@@ -116,6 +120,8 @@
 #define CMD_PREPARE_QUICK_RUN 0x09
 #define CMD_CYCLE_SD_PARTITION 0x0A
 #define CMD_DELETE_SD_FILE 0x0B
+#define CMD_LOAD_LAST_SELECTION 0x0C
+#define CMD_SAVE_LAST_SELECTION 0x0D
 #define CMD_FH_LIST_PAGE 0x40
 #define CMD_FH_DOWNLOAD  0x41
 #define CMD_FH_SEARCH    0x42
@@ -205,6 +211,9 @@ void load_page_records(unsigned int page_index);
 void navigateMenu();
 void helpMenu();
 void loadGame(int index);
+void wait_ctrl_cmd(void);
+unsigned char run_ctrl_cmd(unsigned char cmd);
+void save_last_selection(unsigned int index);
 void launch_wifi_config(void);
 void execute_rst00();
 void main();

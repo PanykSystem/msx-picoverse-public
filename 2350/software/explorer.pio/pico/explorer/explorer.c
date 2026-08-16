@@ -98,6 +98,8 @@
 #define CMD_PREPARE_QUICK_RUN 0x09 // Command: load saved/default launch options for quick-run
 #define CMD_CYCLE_SD_PARTITION 0x0A // Command: cycle Explorer microSD browse partition
 #define CMD_DELETE_SD_FILE 0x0B // Command: delete selected Explorer microSD file
+#define CMD_LOAD_LAST_SELECTION 0x0C // Command: load the last executed entry from microSD
+#define CMD_SAVE_LAST_SELECTION 0x0D // Command: save the entry being executed to microSD
 #define CMD_FH_LIST_PAGE   0x40 // Command: File Hunter list page from menu ROM
 #define CMD_FH_DOWNLOAD    0x41 // Command: File Hunter download/save from menu ROM
 #define CMD_FH_SEARCH      0x42 // Command: File Hunter search from menu ROM
@@ -124,6 +126,9 @@
 #define CTRL_SD_PARTITION_INFO_BASE FH_STATUS_TEXT_BASE
 #define CTRL_SD_PARTITION_INFO_SIZE 32u
 #define CTRL_VDP_FREQ   0xBFA0 // Control: per-ROM VDP 50/60Hz load read-back (Pico -> MSX)
+#define CTRL_NET_STATUS 0xBFA1 // Control: ESP-01 network link state read-back (Pico -> MSX)
+#define NET_STATUS_OFFLINE 0u  // ESP-01 missing, not answering or not joined to an access point
+#define NET_STATUS_ONLINE  1u  // ESP-01 answered and reports an active access point connection
 #define VDP_FREQ_DEFAULT 0u
 #define VDP_FREQ_60HZ    1u
 #define VDP_FREQ_50HZ    2u
@@ -267,6 +272,15 @@
 #define PV_CONFIG_MAGIC_3 'F'
 #define PV_CONFIG_SIZE 5u
 #define PV_CONFIG_PATH "/PICOVERSE.PVC"
+
+// Last executed Flash/microSD entry, remembered across power cycles.
+#define PV_LAST_MAGIC_0 'P'
+#define PV_LAST_MAGIC_1 'V'
+#define PV_LAST_MAGIC_2 'L'
+#define PV_LAST_MAGIC_3 'S'
+#define PV_LAST_VERSION 1u
+#define PV_LAST_HEADER_SIZE 8u
+#define PV_LAST_PATH "/PICOVERSE.PVL"
 
 
 // MP3 control registers
@@ -657,6 +671,12 @@ static ROMRecord flash_records[MAX_FLASH_RECORDS];
 static uint16_t flash_record_count = 0;
 static char sd_current_path[SD_PATH_MAX] = "/";
 static uint8_t browse_source_mode = SOURCE_MODE_FLASH;
+// Last executed entry: source, full microSD path (or flash display name) and the
+// folder it lives in, so the menu can reopen on it after a power cycle.
+static uint8_t last_selection_source = 0;
+static char last_selection_path[SD_PATH_MAX];
+static char last_selection_dir[SD_PATH_MAX] = "/";
+static bool last_selection_restore_pending = false;
 static uint8_t ctrl_status_value = CTRL_MAGIC;
 static volatile bool refresh_requested = false;
 static volatile bool refresh_in_progress = false;
@@ -737,9 +757,57 @@ static fh_catalog_record_t fh_catalog[FH_MAX_RESULTS];
 static uint16_t fh_catalog_count = 0;
 static bool fh_catalog_loaded = false;
 static bool fh_catalog_message = false;
-static bool fh_network_verified = false;
 static uint8_t fh_tcp_buffer[FH_HTTP_CHUNK_SIZE + 2u];
 static char fh_active_query[FH_QUERY_SIZE];
+
+// ESP-01 link monitor -------------------------------------------------------
+// The MSX File Hunter screen shows a Network Online/Offline indicator. All of
+// the decision making happens on this side so the MSX only reads one byte
+// (CTRL_NET_STATUS) instead of interpreting ESP-01 answers by itself.
+#define ESP_STATION_CONNECTING   1u        // wifi_station_get_connect_status() values
+#define ESP_STATION_GOT_IP       5u        // reported by the ESP-01 UNAPI firmware
+#define ESP_PROBE_TIMEOUT_US     250000u   // per attempt; the ESP answers 'g' within a few ms
+#define ESP_PROBE_ATTEMPTS       3u        // retries recover from a desynchronized ESP parser
+#define ESP_PARSER_RESET_US      300000u   // ESP-01 RX parser drops partial frames after 250 ms
+#define ESP_PROBE_QUIET_US       3000u     // UART must be idle before the probe is sent
+#define ESP_PROBE_QUIET_MAX_US   50000u    // bound on the pre-probe drain
+#define ESP_CONNECTING_WAIT_US   3000000u  // keep polling while the ESP is still joining an AP
+#define ESP_CACHE_PRESENT_US     3000000u  // re-probe interval while the module answers
+#define ESP_CACHE_ABSENT_US      30000000u // back-off when no module answered at all
+#define ESP_TRAFFIC_STICKY_US    10000000u // recent transfer keeps the link reported as online
+
+static volatile uint8_t esp_net_status = NET_STATUS_OFFLINE;
+static bool esp_link_probed = false;
+static bool esp_link_module_present = false;
+static uint32_t esp_link_checked_us = 0;
+static bool esp_link_traffic_valid = false;
+static uint32_t esp_link_traffic_us = 0;
+static char esp_link_ssid[33];
+
+// Stores the outcome of a link check. "answered" means the module replied at
+// all (used to pick the re-probe interval), "online" that it is joined to an
+// access point. A transfer that completed moments ago outranks a status query
+// the module was too busy to answer, which keeps the indicator from flapping.
+static void esp_link_store(bool answered, bool online)
+{
+    if (!online && esp_link_traffic_valid &&
+        (uint32_t)(time_us_32() - esp_link_traffic_us) < ESP_TRAFFIC_STICKY_US)
+    {
+        online = true;
+    }
+    esp_link_module_present = answered || online;
+    esp_net_status = online ? NET_STATUS_ONLINE : NET_STATUS_OFFLINE;
+    esp_link_probed = true;
+    esp_link_checked_us = time_us_32();
+}
+
+// A completed HTTP transfer proves the link far better than any status query.
+static void esp_link_note_traffic(void)
+{
+    esp_link_traffic_valid = true;
+    esp_link_traffic_us = time_us_32();
+    esp_link_store(true, true);
+}
 
 // SCC emulation state + I2S audio
 #define SCC_VOLUME_SHIFT 2  // Left-shift SCC output for volume boost (4x)
@@ -1739,6 +1807,188 @@ static void process_save_options_request(void) {
     }
 }
 
+// --- Last executed entry -----------------------------------------------------
+// The menu asks the Pico to store the Flash/microSD entry it is about to run so
+// the next boot can reopen the same source, folder and cursor position. The
+// state lives in a small file on the root of the browse partition.
+
+static void split_last_selection_dir(void) {
+    last_selection_dir[0] = '/';
+    last_selection_dir[1] = '\0';
+    if (last_selection_source != SOURCE_MODE_SD) {
+        return;
+    }
+    const char *slash = strrchr(last_selection_path, '/');
+    if (!slash || slash == last_selection_path) {
+        return;
+    }
+    size_t len = (size_t)(slash - last_selection_path);
+    memcpy(last_selection_dir, last_selection_path, len);
+    last_selection_dir[len] = '\0';
+}
+
+static void process_save_last_selection_request(void) {
+    ctrl_ack_value = 0;
+
+    uint16_t index = query_filtered_index();
+    if (index >= total_record_count) {
+        return;
+    }
+    uint16_t record_index = filtered_indices[index];
+    if (record_index >= full_record_count) {
+        return;
+    }
+
+    ROMRecord const *rec = &records[record_index];
+    if ((rec->Mapper & FOLDER_FLAG) != 0) {
+        return;
+    }
+
+    char path[SD_PATH_MAX];
+    uint8_t source;
+    if ((rec->Mapper & SOURCE_SD_FLAG) != 0) {
+        if (sd_path_offsets[record_index] == 0xFFFF) {
+            return;
+        }
+        source = SOURCE_MODE_SD;
+        const char *rom_path = sd_path_buffer + sd_path_offsets[record_index];
+        if (strlen(rom_path) >= sizeof(path)) {
+            return;
+        }
+        strcpy(path, rom_path);
+    } else {
+        source = SOURCE_MODE_FLASH;
+        trim_name_copy(path, rec->Name);
+    }
+
+    if (source == last_selection_source && strcmp(path, last_selection_path) == 0) {
+        ctrl_ack_value = 1; // already stored, keep the card untouched
+        return;
+    }
+
+    quiesce_mp3_core1_before_sd_work();
+    if (!sd_mount_card()) {
+        return;
+    }
+
+    FIL fil;
+    if (f_open(&fil, PV_LAST_PATH, FA_CREATE_ALWAYS | FA_WRITE) != FR_OK) {
+        return;
+    }
+    uint8_t header[PV_LAST_HEADER_SIZE] = {
+        PV_LAST_MAGIC_0, PV_LAST_MAGIC_1, PV_LAST_MAGIC_2, PV_LAST_MAGIC_3,
+        PV_LAST_VERSION, source, 0, 0
+    };
+    UINT path_len = (UINT)(strlen(path) + 1u);
+    UINT written = 0;
+    bool ok = f_write(&fil, header, sizeof(header), &written) == FR_OK && written == sizeof(header);
+    if (ok) {
+        ok = f_write(&fil, path, path_len, &written) == FR_OK && written == path_len;
+    }
+    if (f_close(&fil) != FR_OK || !ok) {
+        return;
+    }
+
+    last_selection_source = source;
+    strcpy(last_selection_path, path);
+    split_last_selection_dir();
+    ctrl_ack_value = 1;
+}
+
+static void process_load_last_selection_request(void) {
+    ctrl_ack_value = 0;
+    ctrl_mapper_value = 0;
+    last_selection_source = 0;
+    last_selection_path[0] = '\0';
+    last_selection_dir[0] = '/';
+    last_selection_dir[1] = '\0';
+    last_selection_restore_pending = false;
+
+    quiesce_mp3_core1_before_sd_work();
+    if (!sd_mount_card()) {
+        return;
+    }
+
+    FIL fil;
+    if (f_open(&fil, PV_LAST_PATH, FA_READ) != FR_OK) {
+        return;
+    }
+    uint8_t header[PV_LAST_HEADER_SIZE];
+    char path[SD_PATH_MAX];
+    UINT br = 0;
+    memset(path, 0, sizeof(path));
+    bool ok = f_read(&fil, header, sizeof(header), &br) == FR_OK && br == sizeof(header);
+    if (ok) {
+        ok = f_read(&fil, path, sizeof(path) - 1u, &br) == FR_OK && br >= 2u;
+    }
+    f_close(&fil);
+    if (!ok) {
+        return;
+    }
+    if (header[0] != PV_LAST_MAGIC_0 || header[1] != PV_LAST_MAGIC_1 ||
+        header[2] != PV_LAST_MAGIC_2 || header[3] != PV_LAST_MAGIC_3 ||
+        header[4] != PV_LAST_VERSION) {
+        return;
+    }
+
+    uint8_t source = header[5];
+    if (source != SOURCE_MODE_FLASH && source != SOURCE_MODE_SD) {
+        return;
+    }
+    if (source == SOURCE_MODE_SD) {
+        FILINFO fno;
+        if (f_stat(path, &fno) != FR_OK) {
+            return; // file was deleted or the card changed: fall back to flash
+        }
+    }
+
+    last_selection_source = source;
+    strcpy(last_selection_path, path);
+    split_last_selection_dir();
+    last_selection_restore_pending = true;
+    ctrl_mapper_value = source;
+    ctrl_ack_value = 1;
+}
+
+// Point match_index at the last executed entry once the list it belongs to has
+// been rebuilt, so the menu can place the cursor on it. ctrl_ack_value is set to
+// CTRL_MAGIC to tell the menu the restore is resolved.
+static void resolve_last_selection_match(void) {
+    if (!last_selection_restore_pending) {
+        return;
+    }
+    last_selection_restore_pending = false;
+    match_index = 0xFFFF;
+
+    char name_buf[ROM_NAME_MAX + 1];
+    for (uint16_t i = 0; i < total_record_count; i++) {
+        uint16_t record_index = filtered_indices[i];
+        if (record_index >= full_record_count) {
+            continue;
+        }
+        ROMRecord const *rec = &records[record_index];
+        if ((rec->Mapper & FOLDER_FLAG) != 0) {
+            continue;
+        }
+        if (last_selection_source == SOURCE_MODE_SD) {
+            if ((rec->Mapper & SOURCE_SD_FLAG) == 0 || sd_path_offsets[record_index] == 0xFFFF) {
+                continue;
+            }
+            if (equals_ignore_case(sd_path_buffer + sd_path_offsets[record_index], last_selection_path)) {
+                match_index = i;
+                break;
+            }
+        } else if ((rec->Mapper & SOURCE_SD_FLAG) == 0) {
+            trim_name_copy(name_buf, rec->Name);
+            if (strcmp(name_buf, last_selection_path) == 0) {
+                match_index = i;
+                break;
+            }
+        }
+    }
+    ctrl_ack_value = CTRL_MAGIC;
+}
+
 static void process_prepare_quick_run_request(void) {
     uint16_t index = query_filtered_index();
     ctrl_ack_value = 0;
@@ -2422,6 +2672,7 @@ static bool refresh_records_chunked(void) {
         full_record_count = refresh_record_index;
         memset(filter_query, 0, sizeof(filter_query));
         apply_filter();
+        resolve_last_selection_match();
         current_page = 0;
         build_page_buffer(current_page);
         refresh_state = REFRESH_IDLE;
@@ -5261,6 +5512,9 @@ static inline void __not_in_flash_func(handle_menu_write_explorer)(uint16_t addr
             browse_source_mode = mode;
             sd_current_path[0] = '/';
             sd_current_path[1] = '\0';
+            if (last_selection_restore_pending && mode == last_selection_source) {
+                strcpy(sd_current_path, last_selection_dir);
+            }
             memset(filter_query, 0, sizeof(filter_query));
             refresh_requested = true;
         }
@@ -5283,6 +5537,14 @@ static inline void __not_in_flash_func(handle_menu_write_explorer)(uint16_t addr
         else if (data == CMD_DELETE_SD_FILE)
         {
             process_delete_sd_file_request();
+        }
+        else if (data == CMD_LOAD_LAST_SELECTION)
+        {
+            process_load_last_selection_request();
+        }
+        else if (data == CMD_SAVE_LAST_SELECTION)
+        {
+            process_save_last_selection_request();
         }
         else if (data == CMD_FH_LIST_PAGE || data == CMD_FH_SEARCH ||
                  data == CMD_FH_DOWNLOAD || data == CMD_FH_WIFI_STATUS ||
@@ -5419,6 +5681,10 @@ static uint8_t __not_in_flash_func(fh_read_window_byte)(uint16_t addr, bool *in_
         {
             data = (uint8_t)pico_chip_id[addr - CTRL_CHIP_ID_BASE];
         }
+        else if (addr == CTRL_NET_STATUS)
+        {
+            data = esp_net_status;
+        }
         else if (addr >= FH_STATUS_TEXT_BASE && addr < (FH_STATUS_TEXT_BASE + FH_STATUS_TEXT_SIZE))
         {
             data = (uint8_t)fh_wifi_status_text[addr - FH_STATUS_TEXT_BASE];
@@ -5453,6 +5719,10 @@ static uint8_t __not_in_flash_func(fh_read_menu_window_byte)(uint16_t addr, bool
         else if (addr >= CTRL_CHIP_ID_BASE && addr < (CTRL_CHIP_ID_BASE + CTRL_CHIP_ID_SIZE))
         {
             data = (uint8_t)pico_chip_id[addr - CTRL_CHIP_ID_BASE];
+        }
+        else if (addr == CTRL_NET_STATUS)
+        {
+            data = esp_net_status;
         }
         else if (addr >= FH_STATUS_TEXT_BASE && addr < (FH_STATUS_TEXT_BASE + FH_STATUS_TEXT_SIZE))
         {
@@ -6436,7 +6706,6 @@ static bool fh_http_get_with_timestamp(const char *path, fh_http_body_callback_t
 
     if (!fh_wifi_wait_connected(FH_WIFI_CONNECT_WAIT_US))
     {
-        fh_network_verified = false;
         fh_set_offline_status();
         return false;
     }
@@ -6448,7 +6717,7 @@ static bool fh_http_get_with_timestamp(const char *path, fh_http_body_callback_t
         snprintf(url, sizeof(url), "http://" FH_HOST "%s", path);
         http_ok = fh_http_get_url(url, callback, ctx, idle_timeout_us, 0, response_timestamp);
     }
-    if (http_ok) fh_network_verified = true;
+    if (http_ok) esp_link_note_traffic();
     return http_ok;
 }
 
@@ -6959,114 +7228,215 @@ static bool __not_in_flash_func(fh_wifi_wait_byte)(uint8_t *data_out, uint32_t d
     return false;
 }
 
-static bool __not_in_flash_func(fh_wifi_query_ap_status)(uint8_t *payload, uint16_t *payload_len)
+// Waits for the ESP-01 UART to fall silent before a query is sent. Leftover
+// bytes from a previous transfer are the main reason a status query used to
+// desynchronize and report a healthy module as offline.
+static void __not_in_flash_func(esp_uart_settle)(void)
 {
-    uint8_t data;
-    uint8_t size_hi;
-    uint8_t size_lo;
-    uint16_t size;
-    uint16_t keep;
-    uint32_t deadline;
+    uint32_t limit = time_us_32() + ESP_PROBE_QUIET_MAX_US;
+    uint32_t quiet = time_us_32() + ESP_PROBE_QUIET_US;
+    uint8_t drop;
 
     wifi_uart_init_once();
+    while ((int32_t)(time_us_32() - limit) < 0)
+    {
+        wifi_service_rx();
+        fh_service_msx_reads();
+        if (wifi_pop_rx_byte(&drop))
+        {
+            quiet = time_us_32() + ESP_PROBE_QUIET_US;
+            continue;
+        }
+        if ((int32_t)(time_us_32() - quiet) >= 0) break;
+    }
     wifi_hw_rx_drain();
     wifi_reset_fifo();
+}
 
+// Reads one framed answer to the 'g' (get access point status) command. The
+// reader keeps scanning for a plausible frame until the deadline instead of
+// failing on the first mismatched byte, so a late reply from an earlier
+// command cannot be mistaken for "no module".
+static bool __not_in_flash_func(esp_read_ap_frame)(uint8_t *payload, uint16_t *payload_len,
+                                                   uint32_t deadline)
+{
+    uint8_t data;
+
+    while (fh_wifi_wait_byte(&data, deadline))
+    {
+        uint8_t size_hi;
+        uint8_t size_lo;
+        uint16_t size;
+        uint16_t keep;
+        bool complete = true;
+
+        if (data != 'g') continue;                          // resync on the reply tag
+        if (!fh_wifi_wait_byte(&data, deadline)) return false;
+        if (data != 0u) continue;                           // not an OK answer
+        if (!fh_wifi_wait_byte(&size_hi, deadline)) return false;
+        if (!fh_wifi_wait_byte(&size_lo, deadline)) return false;
+
+        size = (uint16_t)(((uint16_t)size_hi << 8) | size_lo);
+        if (size < 2u || size > 34u) continue;              // implausible frame
+
+        keep = size;
+        if (keep > 33u) keep = 33u;
+        for (uint16_t i = 0; i < size; ++i)
+        {
+            if (!fh_wifi_wait_byte(&data, deadline)) { complete = false; break; }
+            if (i < keep) payload[i] = data;
+        }
+        if (!complete) return false;
+        if (payload[0] > ESP_STATION_GOT_IP) continue;      // not a station status byte
+
+        *payload_len = keep;
+        return true;
+    }
+    return false;
+}
+
+static bool __not_in_flash_func(fh_wifi_query_ap_status)(uint8_t *payload, uint16_t *payload_len,
+                                                         uint32_t timeout_us)
+{
+    esp_uart_settle();
     uart_putc_raw(WIFI_UART_INSTANCE, 'g');
     wifi_tx_busy_deadline_us = time_us_32() + wifi_uart_frame_time_us();
-    deadline = time_us_32() + 1000000u;
-
-    do {
-        if (!fh_wifi_wait_byte(&data, deadline)) return false;
-    } while (data != 'g');
-
-    if (!fh_wifi_wait_byte(&data, deadline) || data != 0u) return false;
-    if (!fh_wifi_wait_byte(&size_hi, deadline)) return false;
-    if (!fh_wifi_wait_byte(&size_lo, deadline)) return false;
-
-    size = (uint16_t)(((uint16_t)size_hi << 8) | size_lo);
-    if (size == 0u) return false;
-
-    keep = size;
-    if (keep > 33u) keep = 33u;
-    for (uint16_t i = 0; i < size; ++i)
-    {
-        if (!fh_wifi_wait_byte(&data, deadline)) return false;
-        if (i < keep) payload[i] = data;
-    }
-
-    *payload_len = keep;
-    return true;
+    return esp_read_ap_frame(payload, payload_len, time_us_32() + timeout_us);
 }
 
-static bool __not_in_flash_func(fh_wifi_ap_connected)(void)
+// Probes the ESP-01 with retries. Returns true when the module answered at
+// all; *online tells whether it is joined to an access point.
+static bool __not_in_flash_func(esp_probe_link)(bool *online)
 {
-    bool connected = false;
+    uint32_t connect_deadline = time_us_32() + ESP_CONNECTING_WAIT_US;
+    // Once a thorough probe has established that no module is fitted, keep the
+    // later checks short so polling the indicator never stalls the MSX.
+    uint8_t max_attempts = (esp_link_probed && !esp_link_module_present) ? 1u : ESP_PROBE_ATTEMPTS;
+    bool answered = false;
 
-    return fh_wifi_get_ap_connected(&connected) && connected;
+    *online = false;
+    esp_link_ssid[0] = '\0';
+
+    for (;;)
+    {
+        for (uint8_t attempt = 0; attempt < max_attempts; ++attempt)
+        {
+            uint8_t payload[34];
+            uint16_t payload_len = 0;
+
+            if (fh_wifi_query_ap_status(payload, &payload_len, ESP_PROBE_TIMEOUT_US))
+            {
+                answered = true;
+                // STATION_GOT_IP is the only state that means "joined". The
+                // SSID that follows is informational: the firmware can return
+                // it empty while the link is perfectly up, which the previous
+                // check reported as offline.
+                if (payload[0] == ESP_STATION_GOT_IP)
+                {
+                    uint16_t i = 1u;
+                    while (i < payload_len && (i - 1u) < (sizeof(esp_link_ssid) - 1u) &&
+                           payload[i] != 0u)
+                    {
+                        esp_link_ssid[i - 1u] = (char)payload[i];
+                        ++i;
+                    }
+                    esp_link_ssid[i - 1u] = '\0';
+                    *online = true;
+                    return true;
+                }
+                if (payload[0] != ESP_STATION_CONNECTING) return true;
+                break;  // still joining: wait below and probe again
+            }
+            // A truncated command leaves the ESP-01 receive parser waiting for
+            // data; it only falls back to idle after 250 ms, so pause before
+            // retrying instead of declaring the module missing.
+            if ((attempt + 1u) < max_attempts)
+                fh_service_msx_reads_for(ESP_PARSER_RESET_US);
+        }
+
+        if (!answered) return false;
+        if ((int32_t)(time_us_32() - connect_deadline) >= 0) return true;
+        fh_service_msx_reads_for(250000u);
+    }
 }
 
+// Single link check used by callers that only need a yes/no answer (the Nexus
+// tracker include). Returns false when the module did not answer at all.
 static bool __not_in_flash_func(fh_wifi_get_ap_connected)(bool *connected)
 {
-    uint8_t payload[33];
-    uint16_t payload_len = 0;
+    bool online = false;
+    bool answered = esp_probe_link(&online);
 
-    *connected = false;
-    if (!fh_wifi_query_ap_status(payload, &payload_len)) return false;
-    *connected = payload_len >= 2u && payload[0] == 5u && payload[1] != 0u;
-    return true;
+    esp_link_store(answered, online);
+    *connected = (esp_net_status == NET_STATUS_ONLINE);
+    return answered || *connected;
 }
 
 static bool __not_in_flash_func(fh_wifi_wait_connected)(uint32_t timeout_us)
 {
     uint32_t deadline = time_us_32() + timeout_us;
-    bool connected = false;
 
-    while ((int32_t)(time_us_32() - deadline) < 0)
+    for (;;)
     {
-        if (!fh_wifi_get_ap_connected(&connected)) return false;
-        if (connected) return true;
+        bool online = false;
+        bool answered = esp_probe_link(&online);
+
+        esp_link_store(answered, online);
+        if (esp_net_status == NET_STATUS_ONLINE) return true;
+        if (!answered) return false;  // no module fitted: do not stall the transfer
+        if ((int32_t)(time_us_32() - deadline) >= 0) return false;
         fh_copy_status_prefix("Waiting for Wi-Fi...");
         fh_service_msx_reads_for(250000u);
     }
+}
 
-    return fh_wifi_get_ap_connected(&connected) && connected;
+// Refreshes the cached ESP-01 link state exposed through CTRL_NET_STATUS.
+// Probing is rate limited so the MSX can poll the indicator freely, and the
+// back-off is much longer when no module answered at all.
+static void __not_in_flash_func(esp_link_refresh)(bool force)
+{
+    uint32_t ttl = esp_link_module_present ? ESP_CACHE_PRESENT_US : ESP_CACHE_ABSENT_US;
+    bool online = false;
+    bool answered;
+
+    if (!force && esp_link_probed && (uint32_t)(time_us_32() - esp_link_checked_us) < ttl)
+        return;
+
+    answered = esp_probe_link(&online);
+    esp_link_store(answered, online);
 }
 
 static void __not_in_flash_func(fh_update_wifi_status_text)(void)
 {
-    uint8_t payload[33];
-    uint16_t payload_len = 0;
-    uint16_t out = 0;
-    const char *prefix = "Connected to ";
+    esp_link_refresh(false);
 
-    fh_set_offline_status();
-    if (!fh_wifi_query_ap_status(payload, &payload_len) ||
-        payload_len < 2u || payload[0] != 5u)
+    if (esp_net_status != NET_STATUS_ONLINE)
     {
-        if (fh_network_verified)
-            fh_copy_status_prefix("Connected to network");
+        fh_set_offline_status();
         return;
     }
-    if (payload[1] == 0u)
+    if (esp_link_ssid[0] == '\0')
     {
-        fh_network_verified = false;
+        fh_copy_status_prefix("Connected to network");
         return;
     }
 
-    while (out + 1u < FH_STATUS_TEXT_SIZE && prefix[out] != '\0')
+    // Kept short so the text stays clear of the control bytes that share the
+    // status window (CTRL_VDP_FREQ / CTRL_NET_STATUS at 0xBFA0).
     {
-        fh_wifi_status_text[out] = prefix[out];
-        ++out;
-    }
+        const char *prefix = "Connected to ";
+        uint16_t out = 0;
+        uint16_t i;
 
-    for (uint16_t i = 1; i < payload_len && out + 1u < FH_STATUS_TEXT_SIZE; ++i)
-    {
-        uint8_t ch = payload[i];
-        if (ch == 0u) break;
-        fh_wifi_status_text[out++] = (char)ch;
+        while (out < 31u && prefix[out] != '\0')
+        {
+            fh_wifi_status_text[out] = prefix[out];
+            ++out;
+        }
+        for (i = 0; out < 31u && esp_link_ssid[i] != '\0'; ++i)
+            fh_wifi_status_text[out++] = esp_link_ssid[i];
+        fh_wifi_status_text[out] = '\0';
     }
-    fh_wifi_status_text[out] = '\0';
 }
 
 static inline void __not_in_flash_func(handle_fh_write)(uint16_t addr, uint8_t data, void *ctx)
@@ -7375,6 +7745,10 @@ int __no_inline_not_in_flash_func(loadrom_msx_menu)(uint32_t offset)
             else if (!fh_menu_window_active && addr == CTRL_VDP_FREQ)
             {
                 data = ctrl_vdp_frequency;
+            }
+            else if (addr == CTRL_NET_STATUS)
+            {
+                data = esp_net_status;
             }
             else if (fh_menu_window_active && addr >= FH_STATUS_TEXT_BASE && addr < (FH_STATUS_TEXT_BASE + FH_STATUS_TEXT_SIZE))
             {
